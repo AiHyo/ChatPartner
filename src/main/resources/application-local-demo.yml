@@ -1,0 +1,25 @@
+# 复制一份并重命名成application-local.yml
+# AI
+langchain4j:
+  open-ai:
+    chat-model:
+      # 用魔搭的deepseek
+      base-url: https://api-inference.modelscope.cn/v1/
+      api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      model-name: deepseek-ai/DeepSeek-V3.1
+      # 日志
+      log-requests: true
+      log-responses: true
+      # 结构化输出
+      supported-capabilities: response_format_json_schema
+      strict-json-schema: true
+      #      response-format: json_object     # 官方 deepseek - api 的结构化输出配置
+      max-tokens: 8192 # 最大输出长度    # 官方 deepseek - api 的结构化输出配置
+    # 流式输出的模型【不直接支持结构化输出】
+    streaming-chat-model:
+      base-url: https://api-inference.modelscope.cn/v1/
+      api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      model-name: deepseek-ai/DeepSeek-V3.1
+      max-tokens: 8192
+      log-requests: true
+      log-responses: true
