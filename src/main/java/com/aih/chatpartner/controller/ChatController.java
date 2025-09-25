@@ -1,6 +1,6 @@
 package com.aih.chatpartner.controller;
 
-import com.aih.chatpartner.ai.ChatPartnerServer;
+import com.aih.chatpartner.ai.AiService;
 import com.aih.chatpartner.common.BaseResponse;
 import com.aih.chatpartner.common.ResultUtils;
 import jakarta.annotation.Resource;
@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.*;
 public class ChatController {
 
     @Resource
-    private ChatPartnerServer chatPartnerServer;
+    private AiService aiService;
 
     /**
      * 与喜羊羊聊天
@@ -33,7 +33,7 @@ public class ChatController {
             }
 
             log.info("用户消息: {}", userMessage);
-            String response = chatPartnerServer.chatInXiYangYangRole(userMessage);
+            String response = aiService.chatInXiYangYangRole(userMessage);
             log.info("喜羊羊回复: {}", response);
 
             return ResultUtils.success(response);

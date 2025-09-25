@@ -81,13 +81,13 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- langchain4j:https://docs.langchain4j.dev/get-started -->
+        <!-- langchain4j https://docs.langchain4j.dev/get-started -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
             <version>1.5.0</version>
         </dependency>
-        <!-- langchain4j:https://docs.langchain4j.dev/integrations/language-models/open-ai/#spring-boot -->
+        <!-- langchain4j https://docs.langchain4j.dev/integrations/language-models/open-ai/#spring-boot -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
@@ -98,11 +98,27 @@
             <artifactId>langchain4j-reactor</artifactId>
             <version>1.5.0-beta11</version>
         </dependency>
-        <!-- https://docs.langchain4j.dev/tutorials/ai-services#streaming -->
+        <!-- reactor https://docs.langchain4j.dev/tutorials/ai-services#streaming -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-reactor</artifactId>
             <version>1.5.0-beta11</version>
+        </dependency>
+        <!-- redis https://docs.langchain4j.dev/integrations/embedding-stores/redis/ -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-community-redis-spring-boot-starter</artifactId>
+            <version>1.1.0-beta7</version> <!-- 1.5.0-beta11版本需要支持redisjson -->
+        </dependency>
+        <!-- caffeine -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+        <!-- Spring Session + Redis -->
+        <dependency>
+            <groupId>org.springframework.session</groupId>
+            <artifactId>spring-session-data-redis</artifactId>
         </dependency>
     </dependencies>
 

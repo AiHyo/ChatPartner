@@ -8,7 +8,7 @@ import dev.langchain4j.service.SystemMessage;
  * @author zeng.liqiang
  * @date 2025/9/24
  */
-public interface ChatPartnerServer {
+public interface AiService {
 
     /**
      * 与喜羊羊大王聊天
