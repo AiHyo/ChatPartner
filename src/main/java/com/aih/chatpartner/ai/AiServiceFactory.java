@@ -65,10 +65,10 @@ public class AiServiceFactory {
     }
 
     /**
-     * 根据 appId 获取服务（带缓存）
+     * 根据 groupId 获取服务（带缓存）
      */
-    public AiService getAiService(Long appId) {
-        return serviceCache.get(appId, this::createAiService);
+    public AiService getAiService(Long groupId) {
+        return serviceCache.get(groupId, this::createAiService);
     }
 
     /**
@@ -76,18 +76,18 @@ public class AiServiceFactory {
      *
      * @return
      */
-    public AiService createAiService(Long appId) {
+    public AiService createAiService(Long groupId) {
         log.info("Creating AiService with ChatModel: {}", chatModel.getClass().getSimpleName());
 
-        // 根据 appId 构建独立的对话记忆
+        // 根据 groupId 构建独立的对话记忆
         MessageWindowChatMemory chatMemory = MessageWindowChatMemory.builder()
-                .id(appId)
+                .id(groupId)
                 .chatMemoryStore(redisChatMemoryStore)
                 .maxMessages(20)
                 .build();
 
         // 从数据库加载历史对话到记忆中 - 懒加载
-        chatHistoryService.loadChatHistoryToMemory(appId, chatMemory, 20);
+        chatHistoryService.loadChatHistoryToMemory(groupId, chatMemory, 20);
 
         return AiServices.builder(AiService.class)
                 .chatModel(chatModel)
