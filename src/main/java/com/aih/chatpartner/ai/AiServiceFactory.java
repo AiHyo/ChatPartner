@@ -1,5 +1,6 @@
 package com.aih.chatpartner.ai;
 
+import com.aih.chatpartner.service.ChatHistoryService;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
