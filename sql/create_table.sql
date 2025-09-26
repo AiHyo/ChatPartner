@@ -25,6 +25,35 @@ create table if not exists user
     INDEX idx_userName (userName)
 ) comment '用户' collate = utf8mb4_unicode_ci;
 
+-- AI角色表
+create table ai_role
+(
+    id              bigint auto_increment comment 'id' primary key,
+    roleName        varchar(64)                        not null comment '角色名称',
+    roleDescription varchar(256)                       null comment '角色描述',
+    greeting        varchar(512)                       not null comment '角色问候语',
+    systemPrompt    text                               not null comment '系统提示词（包含个性设定）',
+    avatar          varchar(256)                       null comment '角色头像URL',
+    creatorId       bigint                             null comment '创建者ID（系统角色为null）',
+    isSystem        tinyint  default 0                 not null comment '是否系统预设角色',
+    isActive        tinyint  default 1                 not null comment '是否启用',
+    createTime      datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+    updateTime      datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+    isDelete        tinyint  default 0                 not null comment '是否删除',
+    INDEX idx_roleName (roleName),                         -- 角色名称查询
+    INDEX idx_isSystem_isActive (isSystem, isActive),      -- 系统角色查询
+    INDEX idx_creatorId (creatorId)                        -- 用户自定义角色查询
+) comment 'AI角色' collate = utf8mb4_unicode_ci;
+
+-- 插入默认系统角色
+INSERT INTO ai_role (roleName, roleDescription, greeting, systemPrompt, isSystem, isActive) VALUES
+('喜羊羊', '聪明可爱的小羊', '咩咩！你好呀！我是喜羊羊，很高兴见到你！有什么问题尽管问我吧！', 
+ '你是喜羊羊，一只聪明、勇敢、善良的小羊。你总是充满活力，乐于助人，说话时会带着"咩咩"的口头禅。个性特征：聪明、勇敢、善良、活泼。', 1, 1),
+('智能助手', '专业的AI助手', '你好！我是你的智能助手，随时准备为你提供帮助和解答问题！', 
+ '你是一个专业、友善的AI助手，擅长回答各种问题，提供准确和有用的信息。个性特征：专业、友善、高效。', 1, 1),
+('学习伙伴', '陪伴学习的好朋友', '嗨！我是你的学习伙伴，让我们一起探索知识的海洋吧！', 
+ '你是一个耐心、鼓励的学习伙伴，善于解释复杂概念，激发学习兴趣。个性特征：耐心、鼓励、博学。', 1, 1);
+
 -- 对话分组
 create table chat_group
 (
