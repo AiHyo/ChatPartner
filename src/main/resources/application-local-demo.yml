@@ -18,8 +18,10 @@ langchain4j:
     # 流式输出的模型【不直接支持结构化输出】
     streaming-chat-model:
       base-url: https://api-inference.modelscope.cn/v1/
-      api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
       model-name: deepseek-ai/DeepSeek-V3.1
       max-tokens: 8192
       log-requests: true
       log-responses: true
+qiniu:
+  api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

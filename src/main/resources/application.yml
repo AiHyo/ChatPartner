@@ -40,3 +40,22 @@ knife4j:
   enable: true
   setting:
     language: zh_cn
+# 七牛云语音服务配置
+qiniu:
+  # api-key需要在application-local.yml中配置
+  base-url: https://openai.qiniu.com/v1
+  asr-ws-url: wss://openai.qiniu.com/v1/voice/asr
+  tts-ws-url: wss://openai.qiniu.com/v1/voice/tts
+  asr:
+    sample-rate: 16000
+    channels: 1
+    format: raw
+    speaker-diarization: false
+    model: paraformer-realtime-v2
+    latency: normal
+    prompt: ""
+  tts:
+    voice-type: female-tianmei
+    encoding: pcm
+    sample-rate: 16000
+    speed-ratio: 1.0

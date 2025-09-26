@@ -1,6 +1,7 @@
 package com.aih.chatpartner.ai;
 
 import dev.langchain4j.service.SystemMessage;
+import reactor.core.publisher.Flux;
 
 /**
  * 喜羊羊大王AI服务接口
@@ -18,4 +19,12 @@ public interface AiService {
      */
     @SystemMessage(fromResource = "prompt/xiyangyang-prompt.txt")
     String chatInXiYangYangRole(String userMessage);
+
+    /**
+     * 流式与喜羊羊聊天
+     * @param userMessage
+     * @return
+     */
+    @SystemMessage(fromResource = "prompt/xiyangyang-prompt.txt")
+    Flux<String> chatStreamInXiYangYangRole(String userMessage);
 }

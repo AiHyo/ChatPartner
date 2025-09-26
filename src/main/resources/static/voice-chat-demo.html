@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voice Chat Streaming Demo</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Noto Sans", "Microsoft Yahei", sans-serif; margin: 24px; }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    textarea { width: 100%; height: 120px; }
+    #log { white-space: pre-wrap; background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; min-height: 140px; }
+    .pill { padding: 4px 10px; border-radius: 999px; background: #e2e8f0; font-size: 12px; }
+    button { padding: 8px 14px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+    button.secondary { background: #64748b; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    input, select { padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 8px; }
+    .col { display: flex; flex-direction: column; gap: 8px; }
+    .section { border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h2>Voice Chat Streaming Demo</h2>
+  <div class="row">
+    <span class="pill" id="status">Disconnected</span>
+    <label>WS URL <input id="wsUrl" value="ws://localhost:8123/ws/voice-chat" style="width: 320px"></label>
+    <button id="btnConnect">Connect</button>
+    <button id="btnDisconnect" class="secondary" disabled>Disconnect</button>
+  </div>
+
+  <div class="section">
+    <div class="row">
+      <label>groupId <input id="groupId" type="number" value="1" style="width: 100px"></label>
+      <label>voiceType <input id="voiceType" value="qiniu_zh_female_tmjxxy" style="width: 240px"></label>
+      <label>speedRatio <input id="speedRatio" type="number" step="0.1" min="0.5" max="2.0" value="1.0" style="width: 100px"></label>
+      <label>audioFormat <input id="audioFormat" value="raw" style="width: 100px"></label>
+      <button id="btnStart" disabled>Start</button>
+      <button id="btnStop" class="secondary" disabled>Stop</button>
+      <button id="btnMicStart" disabled>Start Mic</button>
+      <button id="btnMicStop" class="secondary" disabled>Stop Mic</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="col">
+      <label>Send text</label>
+      <div class="row">
+        <input id="inputText" placeholder="请输入要对话的文本..." style="flex: 1;" />
+        <button id="btnSendText" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="col">
+      <label>Streaming logs</label>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const log = (msg) => {
+      const el = $("log");
+      el.textContent += msg + "\n";
+      el.scrollTop = el.scrollHeight;
+    };
+
+    let ws = null;
+    let connected = false;
+
+    // Microphone streaming state
+    let audioCtx = null;
+    let mediaStream = null;
+    let sourceNode = null;
+    let processorNode = null;
+    const TARGET_SR = 16000;
+
+    // Audio queue per sentence
+    const audioQueue = [];
+    let currentChunks = [];
+    let playing = false;
+
+    function playNext() {
+      if (playing) return;
+      const item = audioQueue.shift();
+      if (!item) return;
+      playing = true;
+
+      const base64Concat = item.join('');
+      const byteChars = atob(base64Concat);
+      const bytes = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        bytes[i] = byteChars.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        playing = false;
+        playNext();
+      };
+      audio.play().catch(err => {
+        log('[audio] play error: ' + err);
+        playing = false;
+      });
+    }
+
+    function computeDefaultWsUrl() {
+      const origin = location.origin.replace(/^http/, 'ws');
+      // Detect context-path by checking if pathname starts with /api
+      const m = location.pathname.match(/^\/(api)(?:\/.+)?$/);
+      const ctx = m ? '/' + m[1] : '';
+      return origin + ctx + '/ws/voice-chat';
+    }
+
+    function setConnected(v) {
+      connected = v;
+      $('status').textContent = v ? 'Connected' : 'Disconnected';
+      $('btnConnect').disabled = v;
+      $('btnDisconnect').disabled = !v;
+      $('btnStart').disabled = !v;
+      $('btnStop').disabled = !v;
+      $('btnSendText').disabled = !v;
+      $('btnMicStart').disabled = !v;
+      $('btnMicStop').disabled = !v;
+    }
+
+    // Initialize default WS URL based on current page path (handles /api prefix)
+    (function initDefaultWsUrl() {
+      const input = $('wsUrl');
+      if (input && (!input.value || input.value.includes('/ws/voice-chat'))) {
+        input.value = computeDefaultWsUrl();
+      }
+    })();
+
+    $('btnConnect').onclick = () => {
+      const url = $('wsUrl').value.trim();
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        setConnected(true);
+        log('[ws] opened');
+      };
+      ws.onclose = (e) => {
+        setConnected(false);
+        log('[ws] closed: ' + e.code + ' ' + e.reason);
+      };
+      ws.onerror = (e) => {
+        log('[ws] error');
+      };
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          switch (data.type) {
+            case 'started':
+              log('[server] started');
+              break;
+            case 'llm_partial':
+              log('[llm] ' + data.text);
+              break;
+            case 'tts_start':
+              currentChunks = [];
+              log('[tts] start: ' + (data.text || ''));
+              break;
+            case 'tts_chunk':
+              if (data.data) currentChunks.push(data.data);
+              break;
+            case 'tts_done':
+              audioQueue.push(currentChunks.slice());
+              currentChunks = [];
+              playNext();
+              log('[tts] done');
+              break;
+            case 'error':
+              log('[error] ' + data.message);
+              break;
+            default:
+              log('[server] ' + evt.data);
+          }
+        } catch (err) {
+          // maybe non-JSON
+          log('[msg] ' + evt.data);
+        }
+      };
+    };
+
+    $('btnDisconnect').onclick = () => {
+      if (ws) ws.close();
+    };
+
+    $('btnStart').onclick = () => {
+      if (!ws || !connected) return;
+      const payload = {
+        type: 'start',
+        groupId: Number($('groupId').value) || 0,
+        voiceType: $('voiceType').value || 'qiniu_zh_female_tmjxxy',
+        speedRatio: Number($('speedRatio').value) || 1.0,
+        audioFormat: $('audioFormat').value || 'raw'
+      };
+      ws.send(JSON.stringify(payload));
+      log('[client] start sent');
+    };
+
+    $('btnStop').onclick = () => {
+      if (!ws || !connected) return;
+      ws.send(JSON.stringify({ type: 'stop' }));
+      log('[client] stop sent');
+    };
+
+    $('btnSendText').onclick = () => {
+      if (!ws || !connected) return;
+      const text = $('inputText').value.trim();
+      if (!text) return;
+      ws.send(JSON.stringify({ type: 'user_text', text }));
+      log('[client] user_text sent');
+    };
+
+    // --- Microphone capture to 16k PCM streaming ---
+    $('btnMicStart').onclick = async () => {
+      if (!ws || !connected) return;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true }, video: false });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+        const bufferSize = 4096; // ~85ms at 48k
+        processorNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+        const inputSR = audioCtx.sampleRate; // often 44100 or 48000
+
+        processorNode.onaudioprocess = (e) => {
+          const input = e.inputBuffer.getChannelData(0);
+          const down = downsampleBuffer(input, inputSR, TARGET_SR);
+          const pcm16 = floatTo16BitPCM(down);
+          if (ws && connected && pcm16 && pcm16.byteLength > 0) {
+            ws.send(pcm16.buffer);
+          }
+        };
+
+        sourceNode.connect(processorNode);
+        processorNode.connect(audioCtx.destination);
+        log('[mic] started, SR=' + inputSR + ' -> ' + TARGET_SR);
+      } catch (err) {
+        log('[mic] error: ' + err.message);
+      }
+    };
+
+    $('btnMicStop').onclick = () => {
+      try {
+        if (processorNode) { processorNode.disconnect(); processorNode.onaudioprocess = null; }
+        if (sourceNode) sourceNode.disconnect();
+        if (audioCtx) audioCtx.close();
+        if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+      } catch (e) {}
+      processorNode = null; sourceNode = null; audioCtx = null; mediaStream = null;
+      log('[mic] stopped');
+    };
+
+    function downsampleBuffer(buffer, sampleRate, outSampleRate) {
+      if (outSampleRate === sampleRate) return buffer;
+      const ratio = sampleRate / outSampleRate;
+      const newLen = Math.round(buffer.length / ratio);
+      const result = new Float32Array(newLen);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < result.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+        // simple average for cheap anti-aliasing
+        let accum = 0, count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+          accum += buffer[i];
+          count++;
+        }
+        result[offsetResult] = count > 0 ? (accum / count) : 0;
+        offsetResult++;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    function floatTo16BitPCM(float32Array) {
+      const buffer = new ArrayBuffer(float32Array.length * 2);
+      const view = new DataView(buffer);
+      let offset = 0;
+      for (let i = 0; i < float32Array.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); // little-endian
+      }
+      return new Uint8Array(buffer);
+    }
+  </script>
+</body>
+</html>
