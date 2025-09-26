@@ -96,19 +96,4 @@ public class AiServiceFactory {
                 .chatMemory(chatMemory)
                 .build();
     }
-
-    /**
-     * ChatPartner 服务创建工厂
-     *
-     * @return ChatPartnerServer 实例
-     */
-    @Bean
-    public AiService chatPartnerServer() {
-        log.info("Creating chatPartnerFactoryServer with ChatModel: {}", chatModel.getClass().getSimpleName());
-
-        return AiServices.builder(AiService.class)
-                .chatModel(chatModel)
-                .streamingChatModel(streamingChatModel)
-                .build();
-    }
 }
