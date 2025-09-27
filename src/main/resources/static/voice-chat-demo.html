@@ -30,7 +30,11 @@
   <div class="section">
     <div class="row">
       <label>groupId <input id="groupId" type="number" value="1" style="width: 100px"></label>
-      <label>voiceType <input id="voiceType" value="qiniu_zh_female_tmjxxy" style="width: 240px"></label>
+      <label>voiceType
+        <select id="voiceType" style="width: 260px">
+          <option value="qiniu_zh_female_tmjxxy">qiniu_zh_female_tmjxxy</option>
+        </select>
+      </label>
       <label>speedRatio <input id="speedRatio" type="number" step="0.1" min="0.5" max="2.0" value="1.0" style="width: 100px"></label>
       <label>audioFormat <input id="audioFormat" value="raw" style="width: 100px"></label>
       <button id="btnStart" disabled>Start</button>
@@ -85,14 +89,19 @@
       const item = audioQueue.shift();
       if (!item) return;
       playing = true;
-
-      const base64Concat = item.join('');
-      const byteChars = atob(base64Concat);
-      const bytes = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) {
-        bytes[i] = byteChars.charCodeAt(i);
+      // item: Array<Uint8Array>
+      let total = 0;
+      for (const chunk of item) total += chunk.length;
+      if (total === 0) {
+        log('[audio] skip empty audio segment');
+        playing = false;
+        playNext();
+        return;
       }
-      const blob = new Blob([bytes], { type: 'audio/mpeg' });
+      const combined = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of item) { combined.set(chunk, offset); offset += chunk.length; }
+      const blob = new Blob([combined], { type: 'audio/mpeg' });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.onended = () => {
@@ -103,6 +112,8 @@
       audio.play().catch(err => {
         log('[audio] play error: ' + err);
         playing = false;
+        // try next item to avoid blocking
+        playNext();
       });
     }
 
@@ -112,6 +123,63 @@
       const m = location.pathname.match(/^\/(api)(?:\/.+)?$/);
       const ctx = m ? '/' + m[1] : '';
       return origin + ctx + '/ws/voice-chat';
+    }
+
+    function computeApiBase() {
+      const origin = location.origin;
+      const m = location.pathname.match(/^\/(api)(?:\/.+)?$/);
+      const ctx = m ? '/' + m[1] : '';
+      return origin + ctx;
+    }
+
+    function b64ToBytes(b64) {
+      try {
+        // Remove any characters outside the base64 alphabet (safety)
+        const cleaned = (b64 || '').replace(/[^A-Za-z0-9+/=]/g, '');
+        const byteChars = atob(cleaned);
+        const bytes = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+          bytes[i] = byteChars.charCodeAt(i);
+        }
+        return bytes;
+      } catch (e) {
+        log('[audio] base64 decode error: ' + (e && e.message ? e.message : e));
+        return new Uint8Array();
+      }
+    }
+
+    async function loadVoiceList() {
+      try {
+        const url = computeApiBase() + '/voice/list';
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          log('[voice] list fetch failed: ' + resp.status + ' ' + resp.statusText);
+          return;
+        }
+        const arr = await resp.json();
+        if (!Array.isArray(arr)) {
+          log('[voice] unexpected list format');
+          return;
+        }
+        const sel = $('voiceType');
+        const preferred = 'qiniu_zh_female_tmjxxy';
+        sel.innerHTML = '';
+        let hasPreferred = false;
+        for (const v of arr) {
+          const vt = v.voice_type || v.voiceType || '';
+          const vn = v.voice_name || v.voiceName || vt;
+          if (!vt) continue;
+          const opt = document.createElement('option');
+          opt.value = vt;
+          opt.textContent = vn ? (vn + ' (' + vt + ')') : vt;
+          sel.appendChild(opt);
+          if (vt === preferred) hasPreferred = true;
+        }
+        if (hasPreferred) sel.value = preferred;
+        log('[voice] list loaded: ' + sel.options.length + ' items');
+      } catch (e) {
+        log('[voice] list load error: ' + (e && e.message ? e.message : e));
+      }
     }
 
     function setConnected(v) {
@@ -133,6 +201,9 @@
         input.value = computeDefaultWsUrl();
       }
     })();
+
+    // Load voice list on page ready
+    loadVoiceList();
 
     $('btnConnect').onclick = () => {
       const url = $('wsUrl').value.trim();
@@ -164,12 +235,33 @@
               log('[tts] start: ' + (data.text || ''));
               break;
             case 'tts_chunk':
-              if (data.data) currentChunks.push(data.data);
+              if (data.data) {
+                const bytes = b64ToBytes(data.data);
+                if (bytes && bytes.length > 0) {
+                  currentChunks.push(bytes);
+                  log('[tts] chunk bytes: ' + bytes.length);
+                } else {
+                  log('[tts] empty/invalid chunk ignored');
+                }
+              } else {
+                log('[tts] empty chunk ignored');
+              }
               break;
             case 'tts_done':
-              audioQueue.push(currentChunks.slice());
+              if (currentChunks.length > 0) {
+                const total = currentChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+                const combined = new Uint8Array(total);
+                let offset = 0;
+                for (const chunk of currentChunks) {
+                  combined.set(chunk, offset);
+                  offset += chunk.length;
+                }
+                audioQueue.push([combined]);
+                playNext();
+              } else {
+                log('[tts] done with no chunks, skip enqueue');
+              }
               currentChunks = [];
-              playNext();
               log('[tts] done');
               break;
             case 'error':
@@ -177,6 +269,7 @@
               break;
             default:
               log('[server] ' + evt.data);
+              break;
           }
         } catch (err) {
           // maybe non-JSON

@@ -44,13 +44,19 @@ public class QiniuTtsWsClient {
             String url = qiniuConfig.getTtsWsUrl();
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", "Bearer " + qiniuConfig.getApiKey());
+            // 某些实现需要在握手头中附带 VoiceType，参考官方示例
+            headers.put("VoiceType", voiceType);
 
             AtomicBoolean finished = new AtomicBoolean(false);
+            // 追踪握手是否成功与是否收到任何音频数据
+            AtomicBoolean connected = new AtomicBoolean(false);
+            AtomicBoolean receivedAnyData = new AtomicBoolean(false);
 
             WebSocketClient client = new WebSocketClient(new URI(url), new Draft_6455(), headers, 10000) {
                 @Override
                 public void onOpen(ServerHandshake handshakedata) {
                     log.info("TTS WS connected");
+                    connected.set(true);
                     try {
                         Map<String, Object> root = new HashMap<>();
                         Map<String, Object> audio = new HashMap<>();
@@ -77,6 +83,7 @@ public class QiniuTtsWsClient {
                         if (node.has("data")) {
                             String base64 = node.get("data").asText("");
                             if (!base64.isEmpty() && onAudioBase64Chunk != null) {
+                                receivedAnyData.set(true);
                                 onAudioBase64Chunk.accept(base64);
                             }
                         }
@@ -108,7 +115,16 @@ public class QiniuTtsWsClient {
                 @Override
                 public void onClose(int code, String reason, boolean remote) {
                     log.info("TTS WS closed: {} {} remote={} ", code, reason, remote);
-                    // Ensure downstream is unblocked even if server closes without explicit sequence < 0
+                    // 区分握手失败/无数据 与 正常结束
+                    if (!connected.get()) {
+                        if (onError != null) onError.accept(new RuntimeException("TTS WS handshake failed: " + code + " " + reason));
+                        return;
+                    }
+                    if (!receivedAnyData.get()) {
+                        if (onError != null) onError.accept(new RuntimeException("TTS WS closed without data: " + code + " " + reason));
+                        return;
+                    }
+                    // 若正常结束但未给出 sequence<0，兜底触发完成
                     if (finished.compareAndSet(false, true)) {
                         if (onDone != null) onDone.run();
                     }
