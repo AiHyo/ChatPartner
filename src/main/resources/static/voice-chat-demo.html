@@ -104,13 +104,36 @@
       const blob = new Blob([combined], { type: 'audio/mpeg' });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
+      audio.preload = 'auto';
+      let watchdog = null;
+
       audio.onended = () => {
+        if (watchdog) { clearTimeout(watchdog); watchdog = null; }
         URL.revokeObjectURL(url);
         playing = false;
         playNext();
       };
+      audio.onerror = () => {
+        log('[audio] error event, skip to next');
+        if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        playing = false;
+        playNext();
+      };
+      audio.onstalled = () => {
+        log('[audio] stalled, will rely on watchdog');
+      };
+      // 如果 30 秒内没有结束（某些浏览器不触发 ended），强制推进
+      watchdog = setTimeout(() => {
+        log('[audio] watchdog timeout, force next');
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        try { audio.pause(); } catch (e) {}
+        playing = false;
+        playNext();
+      }, 30000);
       audio.play().catch(err => {
         log('[audio] play error: ' + err);
+        if (watchdog) { clearTimeout(watchdog); watchdog = null; }
         playing = false;
         // try next item to avoid blocking
         playNext();
