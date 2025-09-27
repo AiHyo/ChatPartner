@@ -98,4 +98,21 @@ public interface ChatHistoryService extends IService<ChatHistory> {
      * @return
      */
     boolean hasHistoryMessages(Long groupId, Long userId);
+
+    /**
+     * 游标分页获取历史消息（用于“加载更多”）
+     *
+     * 规则：
+     * - 首次（cursor 为空）：按 createTime desc, id desc 取 limit 条，再反转为升序返回
+     * - 下页：取比 cursor(createTime,id) 更“旧”的记录（createTime < cursorTime 或 (createTime = cursorTime 且 id < cursorId)）
+     *
+     * @param groupId 分组ID
+     * @param userId  用户ID
+     * @param cursor  形如 "epochMillis,id"，为空表示首页
+     * @param limit   返回条数（建议 10）
+     * @param asc     返回数据是否升序（建议为 true）
+     * @return 带 nextCursor 与 hasMore 的结果
+     */
+    com.aih.chatpartner.model.dto.chathistory.ChatHistoryCursorPageResponse getChatHistoryByCursor(
+            Long groupId, Long userId, String cursor, int limit, boolean asc);
 }

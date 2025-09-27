@@ -4,7 +4,11 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.aih.chatpartner.exception.BusinessException;
 import com.aih.chatpartner.exception.ErrorCode;
+import com.aih.chatpartner.service.ChatGroupService;
+import com.aih.chatpartner.mapper.ChatGroupMapper;
 import com.aih.chatpartner.mapper.ChatHistoryMapper;
+import com.aih.chatpartner.model.dto.chathistory.ChatHistoryCursorPageResponse;
+import com.aih.chatpartner.model.entity.ChatGroup;
 import com.aih.chatpartner.model.entity.ChatHistory;
 import com.aih.chatpartner.model.enums.MessageTypeEnum;
 import com.aih.chatpartner.service.ChatHistoryService;
@@ -13,10 +17,13 @@ import com.mybatisflex.spring.service.impl.ServiceImpl;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -27,6 +34,11 @@ import java.util.List;
 @Service
 @Slf4j
 public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatHistory> implements ChatHistoryService {
+
+    @Resource
+    private ChatGroupService chatGroupService;
+    @Resource
+    private ChatGroupMapper chatGroupMapper;
 
     @Override
     public void validChatHistory(ChatHistory chatHistory, boolean add) {
@@ -77,6 +89,11 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
         }
 
         log.info("保存用户消息成功，groupId: {}, userId: {}, messageId: {}", groupId, userId, chatHistory.getId());
+        // 更新分组最近聊天时间
+        ChatGroup group = new ChatGroup();
+        group.setId(groupId);
+        group.setLastChatTime(chatHistory.getCreateTime());
+        chatGroupMapper.updateByQuery(group, QueryWrapper.create().eq("id", groupId));
         return chatHistory;
     }
 
@@ -101,6 +118,11 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
         }
 
         log.info("保存AI消息成功，groupId: {}, userId: {}, messageId: {}", groupId, userId, chatHistory.getId());
+        // 更新分组最近聊天时间
+        ChatGroup group = new ChatGroup();
+        group.setId(groupId);
+        group.setLastChatTime(chatHistory.getCreateTime());
+        chatGroupMapper.updateByQuery(group, QueryWrapper.create().eq("id", groupId));
         return chatHistory;
     }
 
@@ -228,5 +250,55 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
                 .limit(1);
         
         return this.count(queryWrapper) > 0;
+    }
+
+    @Override
+    public ChatHistoryCursorPageResponse getChatHistoryByCursor(Long groupId, Long userId, String cursor, int limit, boolean asc) {
+        if (groupId == null || userId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .eq("groupId", groupId)
+                .eq("userId", userId)
+                .eq("isDelete", 0);
+
+        LocalDateTime cursorTime = null;
+        Long cursorId = null;
+        if (StrUtil.isNotBlank(cursor)) {
+            try {
+                String[] arr = cursor.split(",");
+                long epochMillis = Long.parseLong(arr[0]);
+                cursorId = Long.parseLong(arr[1]);
+                cursorTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault());
+                // createTime < cursorTime OR (createTime = cursorTime AND id < cursorId)
+                queryWrapper.and(" (createTime < ? or (createTime = ? and id < ?)) ", cursorTime, cursorTime, cursorId);
+            } catch (Exception e) {
+                log.warn("解析游标失败 cursor={}, 使用首页策略", cursor);
+            }
+        }
+
+        queryWrapper.orderBy("createTime", false).orderBy("id", false).limit(limit);
+        List<ChatHistory> list = this.list(queryWrapper);
+
+        boolean hasMore = CollUtil.isNotEmpty(list) && list.size() >= limit;
+        if (asc && CollUtil.isNotEmpty(list)) {
+            list = list.reversed();
+        }
+
+        String nextCursor = null;
+        if (CollUtil.isNotEmpty(list)) {
+            // 取本批次中“最旧”的一条作为下页游标
+            ChatHistory last = asc ? list.get(0) : list.get(list.size() - 1);
+            // 注意：如果 asc=true，list 已升序，最旧的是第一个；若 asc=false（默认降序），最旧的是最后一个
+            long epoch = last.getCreateTime() == null ? 0L : last.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            nextCursor = epoch + "," + last.getId();
+        }
+
+        ChatHistoryCursorPageResponse resp = new ChatHistoryCursorPageResponse();
+        resp.setItems(list);
+        resp.setHasMore(hasMore);
+        resp.setNextCursor(nextCursor);
+        return resp;
     }
 }

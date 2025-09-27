@@ -56,6 +56,46 @@ public class AiRoleController {
     }
 
     /**
+     * 角色搜索与筛选
+     */
+    @GetMapping("/roles")
+    public BaseResponse<List<AiRole>> searchRoles(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String tag,
+            @RequestParam(required = false, defaultValue = "hot") String sort,
+            @RequestParam(required = false, defaultValue = "1") Integer page,
+            @RequestParam(required = false, defaultValue = "12") Integer size,
+            @RequestParam(required = false, defaultValue = "false") Boolean onlyNotFriend,
+            HttpServletRequest request) {
+        Long userId = null;
+        try {
+            User loginUser = userService.getLoginUser(request);
+            userId = loginUser.getId();
+        } catch (Exception ignored) {}
+        List<AiRole> list = aiRoleService.searchRoles(q, tag, sort, page, size, userId, onlyNotFriend);
+        return ResultUtils.success(list);
+    }
+
+    /**
+     * 标签列表
+     */
+    @GetMapping("/tags")
+    public BaseResponse<List<String>> listTags() {
+        return ResultUtils.success(aiRoleService.listAllTags());
+    }
+
+    /**
+     * 点赞角色
+     */
+    @PostMapping("/{roleId}/like")
+    public BaseResponse<Boolean> likeRole(@PathVariable Long roleId) {
+        if (roleId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        return ResultUtils.success(aiRoleService.likeRole(roleId));
+    }
+
+    /**
      * 根据ID获取角色详情
      *
      * @param id

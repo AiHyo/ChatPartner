@@ -59,4 +59,26 @@ public interface AiRoleService extends IService<AiRole> {
      * @return
      */
     boolean createUserRole(AiRole aiRole, Long userId);
+
+    /**
+     * 角色搜索与筛选
+     * @param q 关键词
+     * @param tag 标签
+     * @param sort hot|new|name
+     * @param page 页号(从1开始)
+     * @param size 每页条数
+     * @param userId 当前用户ID（用于 onlyNotFriend）
+     * @param onlyNotFriend 仅显示未加好友
+     */
+    java.util.List<AiRole> searchRoles(String q, String tag, String sort, Integer page, Integer size, Long userId, Boolean onlyNotFriend);
+
+    /**
+     * 标签列表（去重）
+     */
+    java.util.List<String> listAllTags();
+
+    /**
+     * 点赞角色（likes+1）
+     */
+    boolean likeRole(Long roleId);
 }

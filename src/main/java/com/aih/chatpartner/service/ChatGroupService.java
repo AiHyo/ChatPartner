@@ -55,6 +55,16 @@ public interface ChatGroupService extends IService<ChatGroup> {
     List<ChatGroup> getChatGroupsByUserId(Long userId);
 
     /**
+     * 根据用户与角色获取分组列表，按 lastChatTime DESC 排序
+     */
+    List<ChatGroup> getChatGroupsByUserAndRole(Long userId, Long roleId);
+
+    /**
+     * 获取某个用户-角色下最近一次对话分组（按 lastChatTime DESC 取第一条）
+     */
+    ChatGroup getLatestGroupByUserAndRole(Long userId, Long roleId);
+
+    /**
      * 删除分组及其相关数据
      *
      * @param groupId

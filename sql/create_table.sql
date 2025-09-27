@@ -34,6 +34,8 @@ create table ai_role
     greeting        varchar(512)                       not null comment '角色问候语',
     systemPrompt    text                               not null comment '系统提示词（包含个性设定）',
     avatar          varchar(256)                       null comment '角色头像URL',
+    tags            varchar(512)                       null comment '标签（逗号分隔或JSON）',
+    likes           int          default 0             not null comment '点赞数',
     creatorId       bigint                             null comment '创建者ID（系统角色为null）',
     isSystem        tinyint  default 0                 not null comment '是否系统预设角色',
     isActive        tinyint  default 1                 not null comment '是否启用',
@@ -42,7 +44,9 @@ create table ai_role
     isDelete        tinyint  default 0                 not null comment '是否删除',
     INDEX idx_roleName (roleName),                         -- 角色名称查询
     INDEX idx_isSystem_isActive (isSystem, isActive),      -- 系统角色查询
-    INDEX idx_creatorId (creatorId)                        -- 用户自定义角色查询
+    INDEX idx_creatorId (creatorId),                       -- 用户自定义角色查询
+    INDEX idx_likes (likes),                               -- 热门排序
+    INDEX idx_tags (tags)                                  -- 标签过滤（简单 LIKE/IN 查询）
 ) comment 'AI角色' collate = utf8mb4_unicode_ci;
 
 -- 插入默认系统角色
@@ -54,6 +58,21 @@ INSERT INTO ai_role (roleName, roleDescription, greeting, systemPrompt, isSystem
 ('学习伙伴', '陪伴学习的好朋友', '嗨！我是你的学习伙伴，让我们一起探索知识的海洋吧！', 
  '你是一个耐心、鼓励的学习伙伴，善于解释复杂概念，激发学习兴趣。个性特征：耐心、鼓励、博学。', 1, 1);
 
+-- 用户-角色映射（好友）
+create table if not exists user_ai
+(
+    id         bigint auto_increment comment 'id' primary key,
+    userId     bigint                             not null comment '用户ID',
+    roleId     bigint                             not null comment 'AI角色ID',
+    pinned     tinyint      default 0             not null comment '是否置顶',
+    pinOrder   int          default 0             not null comment '置顶排序（数值越小越靠前）',
+    createTime datetime     default CURRENT_TIMESTAMP not null comment '创建时间',
+    updateTime datetime     default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+    isDelete   tinyint      default 0             not null comment '是否删除',
+    UNIQUE KEY uk_user_role (userId, roleId),
+    INDEX idx_user_pin (userId, pinned, pinOrder)
+) comment '用户-AI角色映射（好友）' collate = utf8mb4_unicode_ci;
+
 -- 对话分组
 create table chat_group
 (
@@ -61,12 +80,14 @@ create table chat_group
     groupName    varchar(128)                       not null comment '分组名称',
     roleId       bigint                             not null comment 'AI角色ID',
     userId       bigint                             not null comment '创建用户id',
+    lastChatTime datetime default CURRENT_TIMESTAMP not null comment '最近聊天时间',
     editTime     datetime default CURRENT_TIMESTAMP not null comment '编辑时间',
     createTime   datetime default CURRENT_TIMESTAMP not null comment '创建时间',
     updateTime   datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
     isDelete     tinyint  default 0                 not null comment '是否删除',
     INDEX idx_userId_isDelete (userId, isDelete),      -- 核心查询：用户有效分组
-    INDEX idx_roleId (roleId)                          -- 角色查询
+    INDEX idx_roleId (roleId),                          -- 角色查询
+    INDEX idx_user_role_lastChat (userId, roleId, lastChatTime) -- 查询最近对话分组
 ) comment '对话分组' collate = utf8mb4_unicode_ci;
 
 
@@ -81,5 +102,6 @@ create table chat_history
     createTime  datetime default CURRENT_TIMESTAMP not null comment '创建时间',
     updateTime  datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
     isDelete    tinyint  default 0                 not null comment '是否删除',
-    INDEX idx_groupId_createTime (groupId, createTime)     -- 核心查询：分组消息分页
+    INDEX idx_groupId_createTime (groupId, createTime),     -- 核心查询：分组消息分页
+    INDEX idx_groupId_time_id (groupId, createTime, id)     -- 游标查询（时间相同按id保证稳定顺序）
 ) comment '对话历史' collate = utf8mb4_unicode_ci;

@@ -169,4 +169,32 @@ public class ChatGroupController {
         List<ChatGroup> chatGroupList = chatGroupService.getChatGroupsByUserId(loginUser.getId());
         return ResultUtils.success(chatGroupList);
     }
+
+    /**
+     * 获取当前用户在某个角色下的分组列表（按 lastChatTime DESC）
+     */
+    @GetMapping("/byRole")
+    @AuthCheck(mustRole = UserConstant.DEFAULT_ROLE)
+    public BaseResponse<List<ChatGroup>> getGroupsByRole(@RequestParam Long roleId, HttpServletRequest request) {
+        if (roleId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userService.getLoginUser(request);
+        List<ChatGroup> list = chatGroupService.getChatGroupsByUserAndRole(loginUser.getId(), roleId);
+        return ResultUtils.success(list);
+    }
+
+    /**
+     * 获取当前用户-角色下最近一次对话分组
+     */
+    @GetMapping("/latestByRole")
+    @AuthCheck(mustRole = UserConstant.DEFAULT_ROLE)
+    public BaseResponse<ChatGroup> getLatestGroupByRole(@RequestParam Long roleId, HttpServletRequest request) {
+        if (roleId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userService.getLoginUser(request);
+        ChatGroup latest = chatGroupService.getLatestGroupByUserAndRole(loginUser.getId(), roleId);
+        return ResultUtils.success(latest);
+    }
 }

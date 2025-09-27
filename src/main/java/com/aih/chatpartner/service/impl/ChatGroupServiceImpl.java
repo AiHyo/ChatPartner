@@ -11,6 +11,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +27,7 @@ import java.util.List;
 @Slf4j
 public class ChatGroupServiceImpl extends ServiceImpl<ChatGroupMapper, ChatGroup> implements ChatGroupService {
 
+    @Lazy
     @Resource
     private ChatHistoryService chatHistoryService;
 
@@ -57,8 +59,29 @@ public class ChatGroupServiceImpl extends ServiceImpl<ChatGroupMapper, ChatGroup
         }
         QueryWrapper queryWrapper = QueryWrapper.create()
                 .eq("userId", userId)
+                .orderBy("lastChatTime", false)
                 .orderBy("updateTime", false);
         return this.list(queryWrapper);
+    }
+
+    @Override
+    public List<ChatGroup> getChatGroupsByUserAndRole(Long userId, Long roleId) {
+        if (userId == null || roleId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .eq("userId", userId)
+                .eq("roleId", roleId)
+                .eq("isDelete", 0)
+                .orderBy("lastChatTime", false)
+                .orderBy("updateTime", false);
+        return this.list(queryWrapper);
+    }
+
+    @Override
+    public ChatGroup getLatestGroupByUserAndRole(Long userId, Long roleId) {
+        List<ChatGroup> list = getChatGroupsByUserAndRole(userId, roleId);
+        return list.isEmpty() ? null : list.get(0);
     }
 
     @Override

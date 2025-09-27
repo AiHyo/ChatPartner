@@ -57,6 +57,18 @@ public class AiRole implements Serializable {
     private String avatar;
 
     /**
+     * 标签（逗号分隔或JSON）
+     */
+    @Column("tags")
+    private String tags;
+
+    /**
+     * 点赞数
+     */
+    @Column("likes")
+    private Integer likes;
+
+    /**
      * 创建者ID（系统角色为null）
      */
     @Column("creatorId")
