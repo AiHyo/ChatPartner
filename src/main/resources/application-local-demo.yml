@@ -6,7 +6,7 @@ langchain4j:
       # 用魔搭的deepseek
       base-url: https://api-inference.modelscope.cn/v1/
       api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-      model-name: deepseek-ai/DeepSeek-V3.1
+      model-name: ZhipuAI/GLM-4.5
       # 日志
       log-requests: true
       log-responses: true
@@ -19,9 +19,10 @@ langchain4j:
     streaming-chat-model:
       base-url: https://api-inference.modelscope.cn/v1/
       api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-      model-name: deepseek-ai/DeepSeek-V3.1
+      model-name: ZhipuAI/GLM-4.5
       max-tokens: 8192
       log-requests: true
       log-responses: true
 qiniu:
+  # https://portal.qiniu.com/ai-inference/api-key
   api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

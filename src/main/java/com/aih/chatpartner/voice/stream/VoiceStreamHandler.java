@@ -3,6 +3,9 @@ package com.aih.chatpartner.voice.stream;
 import com.aih.chatpartner.ai.AiService;
 import com.aih.chatpartner.ai.AiServiceFactory;
 import com.aih.chatpartner.config.QiniuConfig;
+import com.aih.chatpartner.model.entity.ChatGroup;
+import com.aih.chatpartner.service.ChatGroupService;
+import com.aih.chatpartner.service.ChatHistoryService;
 import com.aih.chatpartner.service.voice.AsrService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +22,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import reactor.core.Disposable;
 
 /**
  * /ws/voice-chat WebSocket 端点
@@ -36,17 +40,23 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
     private final AiServiceFactory aiServiceFactory;
     private final QiniuConfig qiniuConfig;
     private final AsrService asrService;
+    private final ChatHistoryService chatHistoryService;
+    private final ChatGroupService chatGroupService;
 
     private final Map<String, SessionCtx> sessions = new ConcurrentHashMap<>();
 
     public VoiceStreamHandler(ObjectMapper objectMapper,
                               AiServiceFactory aiServiceFactory,
                               QiniuConfig qiniuConfig,
-                              AsrService asrService) {
+                              AsrService asrService,
+                              ChatHistoryService chatHistoryService,
+                              ChatGroupService chatGroupService) {
         this.objectMapper = objectMapper;
         this.aiServiceFactory = aiServiceFactory;
         this.qiniuConfig = qiniuConfig;
         this.asrService = asrService;
+        this.chatHistoryService = chatHistoryService;
+        this.chatGroupService = chatGroupService;
     }
 
     @Override
@@ -72,10 +82,18 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                 ctx.voiceType = asStr(req.get("voiceType"), "qiniu_zh_female_tmjxxy");
                 ctx.speedRatio = asDouble(req.get("speedRatio"), 1.0);
                 ctx.audioFormat = asStr(req.get("audioFormat"), "raw");
-                ctx.chunker = new TextChunker(64);
+                ctx.autoReply = asBool(req.get("autoReply"), true);
+                ctx.chunker = new TextChunker(24);
                 ctx.ttsClient = new QiniuTtsWsClient(qiniuConfig, objectMapper);
                 ctx.streamingService = aiServiceFactory.getAiService(ctx.groupId);
                 ctx.asrService = this.asrService;
+                // 通过 groupId 反查 userId，用于持久化
+                try {
+                    if (ctx.groupId != null && ctx.groupId > 0) {
+                        ChatGroup grp = chatGroupService.getById(ctx.groupId);
+                        if (grp != null) ctx.userId = grp.getUserId();
+                    }
+                } catch (Exception ignore) {}
                 // 初始化 ASR WS（实时识别）
                 ctx.startAsr(session);
                 sendJson(session, Map.of("type", "started"));
@@ -89,6 +107,14 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                 }
                 startLlmStreaming(session, ctx, text);
             }
+            case "config" -> {
+                // 动态配置：当前仅支持 autoReply 切换
+                Boolean ar = (req.get("autoReply") instanceof Boolean) ? (Boolean) req.get("autoReply") : null;
+                if (ar != null) {
+                    ctx.autoReply = ar;
+                    safeSendJson(session, Map.of("type", "config_ack", "autoReply", ctx.autoReply));
+                }
+            }
             case "stop" -> {
                 // 如果累积了音频，先做一次 ASR -> LLM -> TTS 的链路
                 byte[] audio = ctx.drainAudio();
@@ -96,13 +122,13 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                     // 进行 ASR 识别（当前 AsrService 需要对象存储 URL，暂以演示模式返回）
                     String userText = ctx.asrService.speechToText(audio, ctx.audioFormat);
                     safeSendJson(session, Map.of("type", "asr_final", "text", userText));
-                    startLlmStreaming(session, ctx, userText);
+                    if (ctx.autoReply) startLlmStreaming(session, ctx, userText);
                 } else {
                     // 没有音频则直接关闭
-                    // 关闭 ASR WS
-                    ctx.closeAsr();
                     closeSession(session);
                 }
+                // 无论是否有本地累积音频，收到 stop 后都关闭 ASR WS，避免残留会话
+                ctx.closeAsr();
             }
             default -> sendJson(session, Map.of("type", "error", "message", "unknown type"));
         }
@@ -111,10 +137,25 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
     @Override
     protected void handleBinaryMessage(@NonNull WebSocketSession session, @NonNull BinaryMessage message) {
         SessionCtx ctx = sessions.get(session.getId());
-        if (ctx == null) return;
+        if (ctx == null) {
+            log.warn("Binary message received but no session context found: {}", session.getId());
+            return;
+        }
         java.nio.ByteBuffer buf = message.getPayload();
         byte[] data = new byte[buf.remaining()];
         buf.get(data);
+        log.debug("Received binary audio data: {} bytes from session {}", data.length, session.getId());
+        // 若检测到语音活动且当前仍在播放 TTS，则根据冷却与连续帧策略进行打断（barge-in）
+        if (ctx.ttsBusy.get()) {
+            boolean active = ctx.isVoiceActive(data);
+            ctx.vadActiveFrames = active ? (ctx.vadActiveFrames + 1) : 0;
+            long now = System.currentTimeMillis();
+            if (active && ctx.vadActiveFrames >= ctx.vadRequiredFrames
+                    && (now - ctx.lastBargeInAtMs) >= ctx.bargeInCooldownMs) {
+                ctx.lastBargeInAtMs = now;
+                ctx.interruptTts("user speaking");
+            }
+        }
         // 优先走 ASR WS 实时流
         if (ctx.asrWsClient != null && ctx.asrWsClient.isOpened()) {
             ctx.asrWsClient.sendAudio(data);
@@ -149,6 +190,7 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
     private static String asStr(Object o, String dft) { return o == null ? dft : String.valueOf(o); }
     private static long asLong(Object o, long dft) { try { return o == null ? dft : Long.parseLong(String.valueOf(o)); } catch (Exception e) { return dft; } }
     private static double asDouble(Object o, double dft) { try { return o == null ? dft : Double.parseDouble(String.valueOf(o)); } catch (Exception e) { return dft; } }
+    private static boolean asBool(Object o, boolean dft) { try { return o == null ? dft : (o instanceof Boolean ? (Boolean) o : Boolean.parseBoolean(String.valueOf(o))); } catch (Exception e) { return dft; } }
 
     private void startLlmStreaming(WebSocketSession session, SessionCtx ctx, String text) {
         if (text == null || text.isBlank()) return;
@@ -158,11 +200,20 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
             return;
         }
         ctx.streaming = true;
-        ctx.streamingService.chatStreamInXiYangYangRole(text)
+        // 新一轮 AI 累积缓冲
+        ctx.aiBuf = new StringBuilder(1024);
+        // 若已有订阅，先取消
+        try { if (ctx.llmSub != null && !ctx.llmSub.isDisposed()) ctx.llmSub.dispose(); } catch (Exception ignore) {}
+        ctx.llmSub = ctx.streamingService.chatStreamInXiYangYangRole(text)
                 .doOnError(err -> {
                     log.error("LLM stream error", err);
                     safeSendJson(session, Map.of("type", "error", "message", "llm error: " + err.getMessage()));
+                    // 将已生成的部分内容入库（符合“截断也入库”的要求）
+                    ctx.saveAiIfBufferExists();
                     ctx.streaming = false;
+                    // 清理当前订阅
+                    try { if (ctx.llmSub != null && !ctx.llmSub.isDisposed()) ctx.llmSub.dispose(); } catch (Exception ignore) {}
+                    ctx.llmSub = null;
                     // 继续下一个
                     ctx.drainLlm(session);
                 })
@@ -170,13 +221,21 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                     String rest = ctx.chunker.flushRemainder();
                     if (rest != null && !rest.isEmpty()) {
                         ctx.enqueueTts(rest);
+                        // 同步追加到 AI 累积
+                        if (ctx.aiBuf != null) ctx.aiBuf.append(rest);
                     }
+                    // 本轮完整生成完成，持久化 AI 消息
+                    ctx.saveAiIfBufferExists();
                     ctx.streaming = false;
+                    // 清理当前订阅
+                    try { if (ctx.llmSub != null && !ctx.llmSub.isDisposed()) ctx.llmSub.dispose(); } catch (Exception ignore) {}
+                    ctx.llmSub = null;
                     // 继续下一个
                     ctx.drainLlm(session);
                 })
                 .subscribe(token -> {
                     safeSendJson(session, Map.of("type", "llm_partial", "text", token));
+                    if (ctx.aiBuf != null) ctx.aiBuf.append(token);
                     for (String sentence : ctx.chunker.appendAndExtract(token)) {
                         ctx.enqueueTts(sentence);
                     }
@@ -187,15 +246,26 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
     class SessionCtx {
         final WebSocketSession session;
         Long groupId = 0L;
+        Long userId = null;
         String voiceType = "qiniu_zh_female_tmjxxy";
         Double speedRatio = 1.0;
         volatile boolean streaming = false;
+        boolean autoReply = true;
 
         transient AiService streamingService;
         transient TextChunker chunker;
         transient QiniuTtsWsClient ttsClient;
         transient AsrService asrService;
         transient QiniuAsrWsClient asrWsClient;
+        transient AutoCloseable ttsCancelHandle;
+        transient Disposable llmSub;
+        transient StringBuilder aiBuf;
+        // VAD 与打断控制
+        transient int vadActiveFrames = 0;                 // 连续被判定为“有声”的帧计数
+        transient final int vadRequiredFrames = 2;         // 达到多少连续帧才认为用户开始说话
+        transient long lastBargeInAtMs = 0;                // 上次触发打断的时间
+        transient final long bargeInCooldownMs = 700;      // 连续打断之间的冷却期
+        transient final int vadAbsThreshold = 600;         // 平均绝对幅度阈值（0~32767）
 
         String audioFormat = "raw";
         final ByteArrayOutputStream audioBuf = new ByteArrayOutputStream(32 * 1024);
@@ -221,12 +291,13 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
             // 推送 tts 开始
             safeSendJson(session, Map.of("type", "tts_start", "text", next));
 
-            ttsClient.synthesizeStream(next, voiceType, "mp3", speedRatio,
+            this.ttsCancelHandle = ttsClient.synthesizeStream(next, voiceType, "mp3", speedRatio,
                     base64 -> safeSendJson(session, Map.of("type", "tts_chunk", "data", base64)),
                     () -> {
                         // 完成一个句子的 TTS
                         ttsQueue.poll();
                         ttsBusy.set(false);
+                        this.ttsCancelHandle = null;
                         safeSendJson(session, Map.of("type", "tts_done"));
                         // 继续下一句
                         drainTts();
@@ -234,13 +305,50 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                     err -> {
                         ttsQueue.poll();
                         ttsBusy.set(false);
+                        this.ttsCancelHandle = null;
                         safeSendJson(session, Map.of("type", "error", "message", "tts error: " + err.getMessage()));
                         drainTts();
                     });
         }
 
+        void interruptTts(String reason) {
+            try {
+                if (ttsCancelHandle != null) {
+                    ttsCancelHandle.close();
+                }
+            } catch (Exception ignore) {
+            } finally {
+                ttsCancelHandle = null;
+            }
+            ttsQueue.clear();
+            ttsBusy.set(false);
+            safeSendJson(session, Map.of("type", "tts_interrupted", "reason", reason));
+            // 注意：不取消 LLM；若随后会话关闭，在 dispose 时会将已生成内容入库
+        }
+
         void dispose() {
-            // 若后续加入 ASR/LLM 订阅句柄，可在此处取消
+            // 停止 LLM 流
+            try {
+                if (llmSub != null && !llmSub.isDisposed()) {
+                    llmSub.dispose();
+                }
+            } catch (Exception ignore) {}
+            llmSub = null;
+            // 在关闭会话前，将已生成但未保存的 AI 内容入库
+            saveAiIfBufferExists();
+
+            // 停止 TTS
+            try {
+                if (ttsCancelHandle != null) {
+                    ttsCancelHandle.close();
+                }
+            } catch (Exception ignore) {}
+            ttsCancelHandle = null;
+            ttsQueue.clear();
+            ttsBusy.set(false);
+
+            // 关闭 ASR WS
+            closeAsr();
         }
 
         private void safeSendJson(WebSocketSession session, Map<String, ?> payload) {
@@ -302,8 +410,18 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                         partial -> safeSendJson(session, java.util.Map.of("type", "asr_partial", "text", partial)),
                         fin -> {
                             safeSendJson(session, java.util.Map.of("type", "asr_final", "text", fin));
-                            // 触发 LLM 流式
-                            VoiceStreamHandler.this.startLlmStreaming(session, this, fin);
+                            // 保存用户消息
+                            try {
+                                if (groupId != null && groupId > 0 && userId != null && fin != null && !fin.isBlank()) {
+                                    chatHistoryService.saveUserMessage(groupId, userId, fin);
+                                }
+                            } catch (Exception e) {
+                                log.warn("saveUserMessage failed groupId={}, userId={}, err={}", groupId, userId, e.getMessage());
+                            }
+                            // 触发 LLM 流式（受 autoReply 控制）
+                            if (this.autoReply) {
+                                VoiceStreamHandler.this.startLlmStreaming(session, this, fin);
+                            }
                         },
                         err -> safeSendJson(session, java.util.Map.of("type", "error", "message", "asr error: " + err.getMessage())),
                         () -> safeSendJson(session, java.util.Map.of("type", "asr_closed"))
@@ -319,6 +437,34 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
             } catch (Exception ignore) {
             } finally {
                 asrWsClient = null;
+            }
+        }
+
+        // 计算当前帧是否存在语音活动（简单能量阈值）
+        boolean isVoiceActive(byte[] pcm) {
+            if (pcm == null || pcm.length < 4) return false;
+            int samples = pcm.length / 2;
+            long sumAbs = 0;
+            for (int i = 0; i + 1 < pcm.length; i += 2) {
+                int lo = pcm[i] & 0xff;
+                int hi = pcm[i + 1]; // already signed
+                int val = (hi << 8) | lo; // little-endian to signed 16
+                sumAbs += Math.abs(val);
+            }
+            int avgAbs = (int) (sumAbs / Math.max(1, samples));
+            return avgAbs >= vadAbsThreshold;
+        }
+
+        // 将当前累积的 AI 输出入库（若存在且上下文可用）
+        void saveAiIfBufferExists() {
+            try {
+                if (aiBuf != null && aiBuf.length() > 0 && groupId != null && groupId > 0 && userId != null) {
+                    chatHistoryService.saveAiMessage(groupId, userId, aiBuf.toString());
+                }
+            } catch (Exception e) {
+                log.warn("saveAiMessage failed groupId={}, userId={}, err={}", groupId, userId, e.getMessage());
+            } finally {
+                if (aiBuf != null) aiBuf.setLength(0);
             }
         }
     }

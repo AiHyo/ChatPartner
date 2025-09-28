@@ -14,6 +14,8 @@ import com.aih.chatpartner.model.entity.ChatGroup;
 import com.aih.chatpartner.model.entity.User;
 import com.aih.chatpartner.service.ChatGroupService;
 import com.aih.chatpartner.service.UserService;
+import com.aih.chatpartner.service.ChatHistoryService;
+import com.aih.chatpartner.service.AiRoleService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +39,12 @@ public class ChatGroupController {
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private ChatHistoryService chatHistoryService;
+
+    @Resource
+    private AiRoleService aiRoleService;
 
     /**
      * 创建对话分组
@@ -65,6 +73,16 @@ public class ChatGroupController {
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         
         long newChatGroupId = chatGroup.getId();
+
+        // 为新建分组自动添加一条 AI 的自我介绍（不触发 LLM）
+        try {
+            String greeting = aiRoleService.getGreetingByRoleId(chatGroup.getRoleId());
+            if (greeting != null && !greeting.isEmpty()) {
+                chatHistoryService.saveAiMessage(newChatGroupId, loginUser.getId(), greeting);
+            }
+        } catch (Exception e) {
+            log.warn("创建分组后写入AI问候语失败 groupId={}, err={}", newChatGroupId, e.getMessage());
+        }
         return ResultUtils.success(newChatGroupId);
     }
 

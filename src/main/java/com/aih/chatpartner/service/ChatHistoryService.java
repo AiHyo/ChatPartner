@@ -73,6 +73,17 @@ public interface ChatHistoryService extends IService<ChatHistory> {
     List<ChatHistory> getLatestChatHistory(Long groupId, Long userId, int limit);
 
     /**
+     * 获取分组最早的一条消息
+     */
+    ChatHistory getEarliestMessage(Long groupId, Long userId);
+
+    /**
+     * 若最早一条等于角色问候语且被标记为用户消息，则修正为 AI 消息。
+     * @return 是否执行了修正
+     */
+    boolean repairGreetingIfNeeded(Long groupId, Long userId, String greeting);
+
+    /**
      * 删除分组的所有对话历史
      *
      * @param groupId

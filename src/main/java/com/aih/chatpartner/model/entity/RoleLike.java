@@ -9,11 +9,11 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * 用户-AI 角色映射（好友）
+ * 角色点赞记录（用户-角色一对一）
  */
-@Table("user_ai")
+@Table("role_like")
 @Data
-public class UserAi implements Serializable {
+public class RoleLike implements Serializable {
 
     @Serial
     private static final long serialVersionUID = 1L;
@@ -26,12 +26,6 @@ public class UserAi implements Serializable {
 
     @Column("roleId")
     private Long roleId;
-
-    @Column("pinned")
-    private Integer pinned;
-
-    @Column("pinOrder")
-    private Integer pinOrder;
 
     @Column("createTime")
     private LocalDateTime createTime;

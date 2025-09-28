@@ -83,6 +83,8 @@
     const audioQueue = [];
     let currentChunks = [];
     let playing = false;
+    let pauseMicWhileTts = true; // 暂停麦克风上行（TTS 播放期间）
+    let micPausedForTts = false;
 
     function playNext() {
       if (playing) return;
@@ -239,6 +241,10 @@
       ws.onclose = (e) => {
         setConnected(false);
         log('[ws] closed: ' + e.code + ' ' + e.reason);
+        // 自动停止麦克风
+        if (processorNode || sourceNode || audioCtx || (mediaStream && mediaStream.getTracks().some(t => t.readyState === 'live'))) {
+          try { $('btnMicStop').onclick(); } catch (_) {}
+        }
       };
       ws.onerror = (e) => {
         log('[ws] error');
@@ -256,6 +262,7 @@
             case 'tts_start':
               currentChunks = [];
               log('[tts] start: ' + (data.text || ''));
+              if (pauseMicWhileTts) micPausedForTts = true;
               break;
             case 'tts_chunk':
               if (data.data) {
@@ -286,6 +293,7 @@
               }
               currentChunks = [];
               log('[tts] done');
+              if (pauseMicWhileTts) micPausedForTts = false;
               break;
             case 'error':
               log('[error] ' + data.message);
@@ -336,27 +344,61 @@
     $('btnMicStart').onclick = async () => {
       if (!ws || !connected) return;
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, noiseSuppression: true, echoCancellation: true }, video: false });
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: { 
+            channelCount: 1, 
+            noiseSuppression: true, 
+            echoCancellation: true,
+            sampleRate: 16000  // 尝试直接请求16kHz
+          }, 
+          video: false 
+        });
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+        const inputSR = audioCtx.sampleRate; // often 44100 or 48000
+        
+        // 使用更现代的方式或回退到兼容模式
+        if (audioCtx.audioWorklet && false) { // 暂时禁用 AudioWorklet，使用兼容模式
+          // TODO: 实现 AudioWorklet 版本
+          log('[mic] AudioWorklet not implemented yet, using fallback');
+        }
+        
+        // 使用兼容的 ScriptProcessorNode（虽然已弃用但仍广泛支持）
         const bufferSize = 4096; // ~85ms at 48k
         processorNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-        const inputSR = audioCtx.sampleRate; // often 44100 or 48000
-
+        
+        let audioDataCount = 0;
         processorNode.onaudioprocess = (e) => {
           const input = e.inputBuffer.getChannelData(0);
           const down = downsampleBuffer(input, inputSR, TARGET_SR);
           const pcm16 = floatTo16BitPCM(down);
-          if (ws && connected && pcm16 && pcm16.byteLength > 0) {
-            ws.send(pcm16.buffer);
+          
+          audioDataCount++;
+          if (audioDataCount % 100 === 0) { // 降低日志频率
+            log('[mic] processing audio frame #' + audioDataCount + ', size: ' + pcm16.byteLength + ' bytes');
+          }
+          
+          // TTS 播放期间暂停上行，减少回声导致的打断
+          if (micPausedForTts) return;
+          if (ws && ws.readyState === WebSocket.OPEN && pcm16 && pcm16.byteLength > 0) {
+            try {
+              ws.send(pcm16.buffer);
+              if (audioDataCount <= 1) { // 仅首帧打印详细日志
+                log('[mic] sent audio data: ' + pcm16.byteLength + ' bytes');
+              }
+            } catch (sendErr) {
+              log('[mic] send error: ' + sendErr.message);
+            }
           }
         };
 
         sourceNode.connect(processorNode);
+        // 将处理节点连接到输出以保持处理循环；我们不向 outputBuffer 写入，因而不会回放麦克风声音
         processorNode.connect(audioCtx.destination);
-        log('[mic] started, SR=' + inputSR + ' -> ' + TARGET_SR);
+        log('[mic] started, SR=' + inputSR + ' -> ' + TARGET_SR + ', buffer size: ' + bufferSize);
       } catch (err) {
         log('[mic] error: ' + err.message);
+        console.error('[mic] detailed error:', err);
       }
     };
 

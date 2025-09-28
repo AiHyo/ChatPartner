@@ -1,9 +1,11 @@
 package com.aih.chatpartner.service;
 
 import com.aih.chatpartner.model.entity.AiRole;
+import com.aih.chatpartner.common.PageResponse;
 import com.mybatisflex.core.service.IService;
 
 import java.util.List;
+import com.aih.chatpartner.model.dto.admin.AdminRoleUpsertRequest;
 
 /**
  * AI角色服务
@@ -73,6 +75,11 @@ public interface AiRoleService extends IService<AiRole> {
     java.util.List<AiRole> searchRoles(String q, String tag, String sort, Integer page, Integer size, Long userId, Boolean onlyNotFriend);
 
     /**
+     * 角色分页查询（含总数）
+     */
+    PageResponse<AiRole> searchRolesPage(String q, String tag, String sort, Integer page, Integer size, Long userId, Boolean onlyNotFriend);
+
+    /**
      * 标签列表（去重）
      */
     java.util.List<String> listAllTags();
@@ -81,4 +88,45 @@ public interface AiRoleService extends IService<AiRole> {
      * 点赞角色（likes+1）
      */
     boolean likeRole(Long roleId);
+
+    /**
+     * 切换点赞（已点赞则取消，未点赞则点赞），返回是否点赞后的状态
+     */
+    boolean toggleLike(Long roleId, Long userId);
+
+    /**
+     * 获取用户已点赞的角色ID列表
+     */
+    java.util.List<Long> listLikedRoleIds(Long userId);
+
+    /**
+     * 管理端：分页查询（可过滤 isActive / isSystem）
+     */
+    PageResponse<AiRole> adminPage(String q, String tag, String sort, Integer page, Integer size,
+                                   Integer isActive, Integer isSystem);
+
+    /**
+     * 管理端：创建角色
+     */
+    Long adminCreate(AdminRoleUpsertRequest req, Long adminUserId);
+
+    /**
+     * 管理端：更新角色
+     */
+    boolean adminUpdate(AdminRoleUpsertRequest req);
+
+    /**
+     * 管理端：更新启用状态
+     */
+    boolean adminChangeStatus(Long id, Integer isActive);
+
+    /**
+     * 管理端：删除（逻辑删除）
+     */
+    boolean adminDelete(Long id);
+
+    /**
+     * 管理端：批量删除（逻辑删除）
+     */
+    boolean adminDeleteBatch(java.util.List<Long> ids);
 }

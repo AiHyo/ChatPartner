@@ -8,6 +8,7 @@ import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.handshake.ServerHandshake;
 
+import java.io.Closeable;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -32,14 +33,15 @@ public class QiniuTtsWsClient {
 
     /**
      * 以流式方式将一段文本合成为音频，并通过回调返回 base64 音频分片
+     * @return 返回可用于取消操作的 Closeable 对象
      */
-    public void synthesizeStream(String text,
-                                 String voiceType,
-                                 String encoding,
-                                 double speedRatio,
-                                 Consumer<String> onAudioBase64Chunk,
-                                 Runnable onDone,
-                                 Consumer<Throwable> onError) {
+    public Closeable synthesizeStream(String text,
+                                      String voiceType,
+                                      String encoding,
+                                      double speedRatio,
+                                      Consumer<String> onAudioBase64Chunk,
+                                      Runnable onDone,
+                                      Consumer<Throwable> onError) {
         try {
             String url = qiniuConfig.getTtsWsUrl();
             Map<String, String> headers = new HashMap<>();
@@ -146,9 +148,20 @@ public class QiniuTtsWsClient {
                 }
             };
             client.connect();
+            // 返回一个 Closeable 包装器，用于取消 TTS 操作
+            return () -> {
+                try {
+                    if (client.isOpen()) {
+                        client.close();
+                    }
+                } catch (Exception ignore) {
+                    log.debug("Error closing TTS client", ignore);
+                }
+            };
         } catch (Exception e) {
             log.error("Create TTS WS error", e);
             if (onError != null) onError.accept(e);
+            return () -> {}; // 返回空的 Closeable
         }
     }
 }

@@ -15,6 +15,8 @@ import com.mybatisflex.core.query.QueryWrapper;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,7 +36,6 @@ public class FriendServiceImpl implements FriendService {
         List<UserAi> binds = userAiMapper.selectListByQuery(
                 QueryWrapper.create()
                         .eq("userId", userId)
-                        .eq("isDelete", 0)
                         .orderBy("pinned", false)
                         .orderBy("pinOrder", true)
         );
@@ -72,22 +73,23 @@ public class FriendServiceImpl implements FriendService {
     @Override
     public boolean addFriend(Long userId, Long roleId) {
         if (userId == null || roleId == null) throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        UserAi exist = userAiMapper.selectOneByQuery(QueryWrapper.create().eq("userId", userId).eq("roleId", roleId));
+        
+        // 查询是否已经是好友
+        UserAi exist = userAiMapper.selectOneByQuery(QueryWrapper.create()
+            .eq("userId", userId).eq("roleId", roleId));
+            
         if (exist != null) {
-            // 逻辑恢复
-            if (exist.getIsDelete() != null && exist.getIsDelete() == 1) {
-                exist.setIsDelete(0);
-                exist.setPinned(0);
-                exist.setPinOrder(0);
-                return userAiMapper.update(exist) > 0;
-            }
-            return true;
+            return true; // 已经是好友
         }
+        
+        // 添加新的好友关系
         UserAi rec = new UserAi();
         rec.setUserId(userId);
         rec.setRoleId(roleId);
         rec.setPinned(0);
         rec.setPinOrder(0);
+        rec.setCreateTime(LocalDateTime.now());
+        rec.setUpdateTime(LocalDateTime.now());
         return userAiMapper.insert(rec) > 0;
     }
 
@@ -96,17 +98,18 @@ public class FriendServiceImpl implements FriendService {
         if (userId == null || roleId == null) throw new BusinessException(ErrorCode.PARAMS_ERROR);
         UserAi exist = userAiMapper.selectOneByQuery(QueryWrapper.create().eq("userId", userId).eq("roleId", roleId));
         if (exist == null) return true;
-        exist.setIsDelete(1);
-        return userAiMapper.update(exist) > 0;
+        // 物理删除好友关系
+        return userAiMapper.deleteById(exist.getId()) > 0;
     }
 
     @Override
     public boolean updatePin(Long userId, Long roleId, boolean pinned, Integer pinOrder) {
         if (userId == null || roleId == null) throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        UserAi exist = userAiMapper.selectOneByQuery(QueryWrapper.create().eq("userId", userId).eq("roleId", roleId).eq("isDelete", 0));
+        UserAi exist = userAiMapper.selectOneByQuery(QueryWrapper.create().eq("userId", userId).eq("roleId", roleId));
         if (exist == null) throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "好友不存在");
         exist.setPinned(pinned ? 1 : 0);
         exist.setPinOrder(pinned ? (pinOrder == null ? 0 : pinOrder) : 0);
+        exist.setUpdateTime(LocalDateTime.now());
         return userAiMapper.update(exist) > 0;
     }
 }

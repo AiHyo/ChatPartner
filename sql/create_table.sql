@@ -26,7 +26,8 @@ create table if not exists user
 ) comment '用户' collate = utf8mb4_unicode_ci;
 
 -- AI角色表
-create table ai_role
+drop table ai_role;
+create table if not exists ai_role
 (
     id              bigint auto_increment comment 'id' primary key,
     roleName        varchar(64)                        not null comment '角色名称',
@@ -51,14 +52,15 @@ create table ai_role
 
 -- 插入默认系统角色
 INSERT INTO ai_role (roleName, roleDescription, greeting, systemPrompt, isSystem, isActive) VALUES
-('喜羊羊', '聪明可爱的小羊', '咩咩！你好呀！我是喜羊羊，很高兴见到你！有什么问题尽管问我吧！', 
+('喜羊羊', '聪明可爱的小羊', '咩咩！你好呀！我是喜羊羊，很高兴见到你！有什么问题尽管问我吧！',
  '你是喜羊羊，一只聪明、勇敢、善良的小羊。你总是充满活力，乐于助人，说话时会带着"咩咩"的口头禅。个性特征：聪明、勇敢、善良、活泼。', 1, 1),
-('智能助手', '专业的AI助手', '你好！我是你的智能助手，随时准备为你提供帮助和解答问题！', 
+('智能助手', '专业的AI助手', '你好！我是你的智能助手，随时准备为你提供帮助和解答问题！',
  '你是一个专业、友善的AI助手，擅长回答各种问题，提供准确和有用的信息。个性特征：专业、友善、高效。', 1, 1),
-('学习伙伴', '陪伴学习的好朋友', '嗨！我是你的学习伙伴，让我们一起探索知识的海洋吧！', 
+('学习伙伴', '陪伴学习的好朋友', '嗨！我是你的学习伙伴，让我们一起探索知识的海洋吧！',
  '你是一个耐心、鼓励的学习伙伴，善于解释复杂概念，激发学习兴趣。个性特征：耐心、鼓励、博学。', 1, 1);
 
 -- 用户-角色映射（好友）
+drop table user_ai;
 create table if not exists user_ai
 (
     id         bigint auto_increment comment 'id' primary key,
@@ -68,13 +70,13 @@ create table if not exists user_ai
     pinOrder   int          default 0             not null comment '置顶排序（数值越小越靠前）',
     createTime datetime     default CURRENT_TIMESTAMP not null comment '创建时间',
     updateTime datetime     default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
-    isDelete   tinyint      default 0             not null comment '是否删除',
     UNIQUE KEY uk_user_role (userId, roleId),
     INDEX idx_user_pin (userId, pinned, pinOrder)
 ) comment '用户-AI角色映射（好友）' collate = utf8mb4_unicode_ci;
 
 -- 对话分组
-create table chat_group
+drop table chat_group;
+create table if not exists chat_group
 (
     id           bigint auto_increment comment 'id' primary key,
     groupName    varchar(128)                       not null comment '分组名称',
@@ -90,9 +92,8 @@ create table chat_group
     INDEX idx_user_role_lastChat (userId, roleId, lastChatTime) -- 查询最近对话分组
 ) comment '对话分组' collate = utf8mb4_unicode_ci;
 
-
 -- 对话历史
-create table chat_history
+create table if not exists chat_history
 (
     id          bigint auto_increment comment 'id' primary key,
     message     text                               not null comment '消息内容',
@@ -105,3 +106,17 @@ create table chat_history
     INDEX idx_groupId_createTime (groupId, createTime),     -- 核心查询：分组消息分页
     INDEX idx_groupId_time_id (groupId, createTime, id)     -- 游标查询（时间相同按id保证稳定顺序）
 ) comment '对话历史' collate = utf8mb4_unicode_ci;
+
+-- 角色点赞表（用户-角色一对一）
+drop table role_like;
+create table if not exists role_like
+(
+    id         bigint auto_increment comment 'id' primary key,
+    userId     bigint                             not null comment '用户ID',
+    roleId     bigint                             not null comment 'AI角色ID',
+    createTime datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+    updateTime datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+    UNIQUE KEY uk_user_role_like (userId, roleId),
+    INDEX idx_user_like (userId),
+    INDEX idx_role_like (roleId)
+) comment '角色点赞' collate = utf8mb4_unicode_ci;

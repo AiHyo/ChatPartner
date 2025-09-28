@@ -1,6 +1,7 @@
 package com.aih.chatpartner.controller;
 
 import com.aih.chatpartner.common.BaseResponse;
+import com.aih.chatpartner.common.PageResponse;
 import com.aih.chatpartner.common.ResultUtils;
 import com.aih.chatpartner.exception.BusinessException;
 import com.aih.chatpartner.exception.ErrorCode;
@@ -77,6 +78,27 @@ public class AiRoleController {
     }
 
     /**
+     * 角色分页（带总数）
+     */
+    @GetMapping("/roles/page")
+    public BaseResponse<PageResponse<AiRole>> searchRolesPage(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String tag,
+            @RequestParam(required = false, defaultValue = "hot") String sort,
+            @RequestParam(required = false, defaultValue = "1") Integer page,
+            @RequestParam(required = false, defaultValue = "12") Integer size,
+            @RequestParam(required = false, defaultValue = "false") Boolean onlyNotFriend,
+            HttpServletRequest request) {
+        Long userId = null;
+        try {
+            User loginUser = userService.getLoginUser(request);
+            userId = loginUser.getId();
+        } catch (Exception ignored) {}
+        PageResponse<AiRole> resp = aiRoleService.searchRolesPage(q, tag, sort, page, size, userId, onlyNotFriend);
+        return ResultUtils.success(resp);
+    }
+
+    /**
      * 标签列表
      */
     @GetMapping("/tags")
@@ -93,6 +115,28 @@ public class AiRoleController {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         return ResultUtils.success(aiRoleService.likeRole(roleId));
+    }
+
+    /**
+     * 点赞切换（需要登录）
+     */
+    @PostMapping("/{roleId}/toggle-like")
+    public BaseResponse<Boolean> toggleLike(@PathVariable Long roleId, HttpServletRequest request) {
+        if (roleId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userService.getLoginUser(request);
+        boolean liked = aiRoleService.toggleLike(roleId, loginUser.getId());
+        return ResultUtils.success(liked);
+    }
+
+    /**
+     * 获取当前用户已点赞的角色ID列表
+     */
+    @GetMapping("/liked-ids")
+    public BaseResponse<List<Long>> likedRoleIds(HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        return ResultUtils.success(aiRoleService.listLikedRoleIds(loginUser.getId()));
     }
 
     /**

@@ -160,6 +160,39 @@ public class ChatHistoryServiceImpl extends ServiceImpl<ChatHistoryMapper, ChatH
     }
 
     @Override
+    public ChatHistory getEarliestMessage(Long groupId, Long userId) {
+        if (groupId == null || userId == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .eq("groupId", groupId)
+                .eq("userId", userId)
+                .eq("isDelete", 0)
+                .orderBy("createTime", true)
+                .orderBy("id", true)
+                .limit(1);
+        List<ChatHistory> list = this.list(queryWrapper);
+        return CollUtil.isEmpty(list) ? null : list.get(0);
+    }
+
+    @Override
+    public boolean repairGreetingIfNeeded(Long groupId, Long userId, String greeting) {
+        if (groupId == null || userId == null || StrUtil.isBlank(greeting)) return false;
+        ChatHistory first = getEarliestMessage(groupId, userId);
+        if (first != null && MessageTypeEnum.USER.getValue().equalsIgnoreCase(first.getMessageType())) {
+            String g1 = StrUtil.cleanBlank(StrUtil.trim(greeting));
+            String g2 = StrUtil.cleanBlank(StrUtil.trim(first.getMessage()));
+            if (StrUtil.equalsIgnoreCase(g1, g2)) {
+            ChatHistory patch = new ChatHistory();
+            patch.setId(first.getId());
+            patch.setMessageType(MessageTypeEnum.AI.getValue());
+            return this.updateById(patch);
+            }
+        }
+        return false;
+    }
+
+    @Override
     public List<ChatHistory> getLatestChatHistory(Long groupId, Long userId, int limit) {
         if (groupId == null || userId == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
