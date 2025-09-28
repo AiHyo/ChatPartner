@@ -25,33 +25,41 @@
       </el-popconfirm>
     </div>
 
-    <el-table :data="list" border style="width:100%" @selection-change="onSelectionChange">
-      <el-table-column type="selection" width="48" />
-      <el-table-column prop="id" label="ID" width="110" />
-      <el-table-column prop="roleName" label="名称" min-width="160" />
-      <el-table-column prop="roleDescription" label="简介" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="tags" label="标签" width="200" show-overflow-tooltip />
-      <el-table-column prop="likes" label="点赞" width="90" />
-      <el-table-column prop="isSystem" label="系统" width="80">
-        <template #default="{ row }"><el-tag :type="row.isSystem ? 'warning' : 'info'">{{ row.isSystem ? '是' : '否' }}</el-tag></template>
-      </el-table-column>
-      <el-table-column prop="isActive" label="启用" width="120">
-        <template #default="{ row }">
-          <el-switch :model-value="row.isActive === 1" @change="(val:boolean)=>onToggleActive(row, val)" />
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="260" fixed="right">
-        <template #default="{ row }">
-          <el-button size="small" @click="onView(row)">查看</el-button>
-          <el-button size="small" type="primary" plain @click="onEdit(row)">编辑</el-button>
-          <el-popconfirm title="确认删除该角色？" @confirm="() => onDelete(row)">
-            <template #reference>
-              <el-button size="small" type="danger" plain>删除</el-button>
-            </template>
-          </el-popconfirm>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="table-container">
+      <el-table :data="list" border style="width:100%" @selection-change="onSelectionChange">
+        <el-table-column type="selection" width="48" />
+        <el-table-column prop="id" label="ID" width="110" />
+        <el-table-column label="头像" width="88">
+          <template #default="{ row }">
+            <el-image v-if="row.avatar" :src="row.avatar" fit="cover" style="width:40px;height:40px;border-radius:6px;" />
+            <div v-else style="width:40px;height:40px;border-radius:6px;background:#f2f3f5;display:flex;align-items:center;justify-content:center;">🧩</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="roleName" label="名称" min-width="120" />
+        <el-table-column prop="roleDescription" label="简介" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="tags" label="标签" width="150" show-overflow-tooltip />
+        <el-table-column prop="likes" label="点赞" width="80" />
+        <el-table-column prop="isSystem" label="系统" width="80">
+          <template #default="{ row }"><el-tag :type="row.isSystem ? 'warning' : 'info'">{{ row.isSystem ? '是' : '否' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="isActive" label="启用" width="80">
+          <template #default="{ row }">
+            <el-switch :model-value="row.isActive === 1" @change="(val:boolean)=>onToggleActive(row, val)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" @click="onView(row)">查看</el-button>
+            <el-button size="small" type="primary" plain @click="onEdit(row)">编辑</el-button>
+            <el-popconfirm title="确认删除该角色？" @confirm="() => onDelete(row)">
+              <template #reference>
+                <el-button size="small" type="danger" plain>删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
     <div class="pager">
       <el-pagination
@@ -80,6 +88,10 @@
         </el-form-item>
         <el-form-item label="头像">
           <el-input v-model="form.avatar" placeholder="头像URL" />
+          <div style="margin-top:8px;">
+            <el-image v-if="form.avatar" :src="form.avatar" fit="cover" style="width:72px;height:72px;border-radius:8px;" />
+            <span v-else style="color:#999;">无预览</span>
+          </div>
         </el-form-item>
         <el-form-item label="标签">
           <el-input v-model="form.tags" placeholder="逗号分隔或JSON" />
@@ -237,5 +249,11 @@ onMounted(fetch)
 <style scoped>
 .admin-page { padding: 16px; }
 .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.table-container { 
+  overflow-x: auto; 
+  margin-bottom: 16px;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
 .pager { display: flex; justify-content: center; padding: 12px 0; }
 </style>

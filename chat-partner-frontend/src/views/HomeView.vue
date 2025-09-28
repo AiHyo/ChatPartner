@@ -27,7 +27,7 @@
 </script>
 
 <style scoped>
-.container { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+.container { max-width: 1400px; margin: 0 auto; padding: 0 32px; }
 .home { display: flex; flex-direction: column; gap: 24px; }
 .hero { background: linear-gradient(180deg, #f6f8ff, #ffffff); padding: 64px 0; }
 .hero h1 { font-size: 54px; margin: 0 0 8px; text-align: center; color: #4c51bf; font-weight: 900; }

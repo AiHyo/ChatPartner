@@ -25,6 +25,6 @@ public interface AiService {
      * @param userMessage
      * @return
      */
-    @SystemMessage(fromResource = "prompt/xiyangyang-prompt.txt")
+    // @SystemMessage(fromResource = "prompt/xiyangyang-prompt.txt")
     Flux<String> chatStreamInXiYangYangRole(String userMessage);
 }

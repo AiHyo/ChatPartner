@@ -94,8 +94,10 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                         if (grp != null) ctx.userId = grp.getUserId();
                     }
                 } catch (Exception ignore) {}
-                // 初始化 ASR WS（实时识别）
-                ctx.startAsr(session);
+                // 只在首次start时初始化 ASR WS
+                if (ctx.asrWsClient == null || !ctx.asrWsClient.isOpened()) {
+                    ctx.startAsr(session);
+                }
                 sendJson(session, Map.of("type", "started"));
             }
             case "user_text" -> {
@@ -116,19 +118,27 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                 }
             }
             case "stop" -> {
+                // 关闭ASR连接
+                ctx.closeAsr();
                 // 如果累积了音频，先做一次 ASR -> LLM -> TTS 的链路
                 byte[] audio = ctx.drainAudio();
                 if (audio != null && audio.length > 0) {
                     // 进行 ASR 识别（当前 AsrService 需要对象存储 URL，暂以演示模式返回）
                     String userText = ctx.asrService.speechToText(audio, ctx.audioFormat);
                     safeSendJson(session, Map.of("type", "asr_final", "text", userText));
+                    // 保存用户消息
+                    try {
+                        if (ctx.groupId != null && ctx.groupId > 0 && ctx.userId != null && userText != null && !userText.isBlank()) {
+                            chatHistoryService.saveUserMessage(ctx.groupId, ctx.userId, userText);
+                        }
+                    } catch (Exception e) {
+                        log.warn("saveUserMessage failed groupId={}, userId={}, err={}", ctx.groupId, ctx.userId, e.getMessage());
+                    }
                     if (ctx.autoReply) startLlmStreaming(session, ctx, userText);
-                } else {
-                    // 没有音频则直接关闭
-                    closeSession(session);
                 }
-                // 无论是否有本地累积音频，收到 stop 后都关闭 ASR WS，避免残留会话
-                ctx.closeAsr();
+                // 等待LLM完成后再关闭会话
+                // 不立即关闭，让客户端通过 asr_closed 消息决定何时关闭
+                safeSendJson(session, Map.of("type", "asr_closed"));
             }
             default -> sendJson(session, Map.of("type", "error", "message", "unknown type"));
         }
@@ -145,20 +155,32 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
         byte[] data = new byte[buf.remaining()];
         buf.get(data);
         log.debug("Received binary audio data: {} bytes from session {}", data.length, session.getId());
-        // 若检测到语音活动且当前仍在播放 TTS，则根据冷却与连续帧策略进行打断（barge-in）
-        if (ctx.ttsBusy.get()) {
-            boolean active = ctx.isVoiceActive(data);
+        // 若检测到语音活动且当前正在流式或播放 TTS，进行打断（问题5）
+        boolean active = ctx.isVoiceActive(data);
+        if (active && (ctx.ttsBusy.get() || ctx.streaming)) {
             ctx.vadActiveFrames = active ? (ctx.vadActiveFrames + 1) : 0;
             long now = System.currentTimeMillis();
-            if (active && ctx.vadActiveFrames >= ctx.vadRequiredFrames
+            if (ctx.vadActiveFrames >= ctx.vadRequiredFrames
                     && (now - ctx.lastBargeInAtMs) >= ctx.bargeInCooldownMs) {
                 ctx.lastBargeInAtMs = now;
-                ctx.interruptTts("user speaking");
+                ctx.handleUserInterruption();
+                log.info("User interruption triggered during TTS/LLM streaming");
             }
+        } else if (!active) {
+            ctx.vadActiveFrames = 0;
         }
         // 优先走 ASR WS 实时流
         if (ctx.asrWsClient != null && ctx.asrWsClient.isOpened()) {
-            ctx.asrWsClient.sendAudio(data);
+            try {
+                ctx.asrWsClient.sendAudio(data);
+            } catch (Exception e) {
+                log.warn("Failed to send audio to ASR, will reconnect: {}", e.getMessage());
+                // 尝试重新连接ASR
+                ctx.closeAsr();
+                ctx.startAsr(session);
+                // 同时累积音频以备后用
+                ctx.appendAudio(data);
+            }
         } else {
             // 兜底：本地累积，stop 时走 REST ASR（演示）
             ctx.appendAudio(data);
@@ -196,19 +218,33 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
         if (text == null || text.isBlank()) return;
         if (ctx.streaming) {
             // 正在流式，排队
+            log.info("Already streaming, enqueue text: {}", text);
             ctx.enqueueUserText(text);
             return;
         }
+        
+        // 先保存用户消息（问题1：及时保存）
+        try {
+            if (ctx.groupId != null && ctx.groupId > 0 && ctx.userId != null && !text.isBlank()) {
+                chatHistoryService.saveUserMessage(ctx.groupId, ctx.userId, text);
+                log.info("User message saved immediately: {}", text);
+            }
+        } catch (Exception e) {
+            log.warn("saveUserMessage failed in startLlmStreaming: {}", e.getMessage());
+        }
+        
         ctx.streaming = true;
         // 新一轮 AI 累积缓冲
         ctx.aiBuf = new StringBuilder(1024);
         // 若已有订阅，先取消
         try { if (ctx.llmSub != null && !ctx.llmSub.isDisposed()) ctx.llmSub.dispose(); } catch (Exception ignore) {}
+        
+        log.info("Starting LLM streaming for text: {}", text);
         ctx.llmSub = ctx.streamingService.chatStreamInXiYangYangRole(text)
                 .doOnError(err -> {
                     log.error("LLM stream error", err);
                     safeSendJson(session, Map.of("type", "error", "message", "llm error: " + err.getMessage()));
-                    // 将已生成的部分内容入库（符合“截断也入库”的要求）
+                    // 将已生成的部分内容入库（符合"截断也入库"的要求）
                     ctx.saveAiIfBufferExists();
                     ctx.streaming = false;
                     // 清理当前订阅
@@ -218,13 +254,14 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                     ctx.drainLlm(session);
                 })
                 .doOnComplete(() -> {
+                    log.info("LLM streaming completed");
                     String rest = ctx.chunker.flushRemainder();
                     if (rest != null && !rest.isEmpty()) {
                         ctx.enqueueTts(rest);
                         // 同步追加到 AI 累积
                         if (ctx.aiBuf != null) ctx.aiBuf.append(rest);
                     }
-                    // 本轮完整生成完成，持久化 AI 消息
+                    // 本轮完整生成完成，立即持久化 AI 消息（问题1：及时保存）
                     ctx.saveAiIfBufferExists();
                     ctx.streaming = false;
                     // 清理当前订阅
@@ -325,6 +362,33 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
             safeSendJson(session, Map.of("type", "tts_interrupted", "reason", reason));
             // 注意：不取消 LLM；若随后会话关闭，在 dispose 时会将已生成内容入库
         }
+        
+        // 用户打断时的完整处理（问题5）
+        void handleUserInterruption() {
+            log.info("User interruption detected");
+            // 1. 停止TTS播放
+            interruptTts("user_interruption");
+            
+            // 2. 保存当前已生成的AI内容
+            saveAiIfBufferExists();
+            
+            // 3. 停止LLM流
+            try {
+                if (llmSub != null && !llmSub.isDisposed()) {
+                    llmSub.dispose();
+                }
+            } catch (Exception ignore) {}
+            llmSub = null;
+            
+            // 4. 重置状态
+            streaming = false;
+            
+            // 5. 清空队列，准备接收新输入
+            llmQueue.clear();
+            
+            // 6. 重置切句器
+            chunker = new TextChunker(64);
+        }
 
         void dispose() {
             // 停止 LLM 流
@@ -410,17 +474,25 @@ public class VoiceStreamHandler extends TextWebSocketHandler {
                         partial -> safeSendJson(session, java.util.Map.of("type", "asr_partial", "text", partial)),
                         fin -> {
                             safeSendJson(session, java.util.Map.of("type", "asr_final", "text", fin));
-                            // 保存用户消息
+                            // 保存用户消息（立即保存，问题1）
                             try {
                                 if (groupId != null && groupId > 0 && userId != null && fin != null && !fin.isBlank()) {
                                     chatHistoryService.saveUserMessage(groupId, userId, fin);
+                                    log.info("ASR final message saved: {}", fin);
                                 }
                             } catch (Exception e) {
                                 log.warn("saveUserMessage failed groupId={}, userId={}, err={}", groupId, userId, e.getMessage());
                             }
                             // 触发 LLM 流式（受 autoReply 控制）
-                            if (this.autoReply) {
-                                VoiceStreamHandler.this.startLlmStreaming(session, this, fin);
+                            // 防止重复触发：增强检查逻辑（问题2、3）
+                            if (autoReply && !streaming) {
+                                // 额外检查：如果LLM订阅存在且活跃，不要重复触发
+                                if (llmSub == null || llmSub.isDisposed()) {
+                                    log.info("Triggering LLM for ASR final: {}", fin);
+                                    VoiceStreamHandler.this.startLlmStreaming(session, SessionCtx.this, fin);
+                                } else {
+                                    log.warn("Skipping LLM trigger, already active for: {}", fin);
+                                }
                             }
                         },
                         err -> safeSendJson(session, java.util.Map.of("type", "error", "message", "asr error: " + err.getMessage())),

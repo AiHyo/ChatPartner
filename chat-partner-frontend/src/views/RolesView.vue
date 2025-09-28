@@ -18,8 +18,13 @@
       <el-col v-for="r in list" :key="r.id" :span="6">
         <el-card class="role-card" shadow="hover">
           <div class="card-header">
-            <div class="avatar" :style="{ backgroundImage: r.avatar ? `url(${r.avatar})` : 'none' }">
-              <span v-if="!r.avatar">🧩</span>
+            <div class="avatar">
+              <el-image v-if="r.avatar" :src="r.avatar" fit="cover" loading="lazy">
+                <template #error>
+                  <div class="avatar-fallback">🧩</div>
+                </template>
+              </el-image>
+              <div v-else class="avatar-fallback">🧩</div>
             </div>
             <div class="meta">
               <div class="name">{{ r.roleName }}</div>
@@ -148,12 +153,18 @@ onMounted(async () => {
 .roles-page { padding: 16px; }
 .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .role-card { margin-bottom: 16px; cursor: default; }
+/* 让卡片内容固定高度并使用列布局，保证底部按钮对齐 */
+.role-card :deep(.el-card__body) { display: flex; flex-direction: column; height: 220px; }
 .card-header { display: flex; gap: 12px; }
-.avatar { width: 56px; height: 56px; border-radius: 8px; background: #f5f5f5; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.avatar { width: 56px; height: 56px; border-radius: 8px; overflow: hidden; background: #f5f5f5; display: flex; align-items: center; justify-content: center; }
+.avatar :deep(img), .avatar :deep(.el-image__inner) { width: 100%; height: 100%; object-fit: cover; }
+.avatar-fallback { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #999; }
 .meta { display: flex; flex-direction: column; }
 .name { font-weight: 600; font-size: 16px; }
-.desc { color: #666; font-size: 12px; }
-.tags { margin: 8px 0; display: flex; gap: 8px; flex-wrap: wrap; }
-.actions { display: flex; align-items: center; justify-content: space-between; }
+/* 多行省略，避免卡片拉高 */
+.desc { color: #666; font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 固定标签区域高度，避免有无标签时卡片高度不一致 */
+.tags { margin: 8px 0; display: flex; gap: 8px; flex-wrap: wrap; min-height: 24px; max-height: 48px; overflow: hidden; }
+.actions { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
 .pager { display: flex; justify-content: center; margin: 16px 0; }
 </style>

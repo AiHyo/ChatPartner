@@ -13,10 +13,14 @@ import com.aih.chatpartner.service.AiRoleService;
 import com.aih.chatpartner.service.ChatGroupService;
 import com.aih.chatpartner.service.ChatHistoryService;
 import com.aih.chatpartner.service.UserService;
+import cn.hutool.json.JSONUtil;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 /**
  * 简化的聊天接口
@@ -55,7 +59,6 @@ public class SimpleChatController {
         if (chatRequest == null || chatRequest.getGroupId() == null || chatRequest.getMessage() == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-
         User loginUser = userService.getLoginUser(request);
         Long groupId = chatRequest.getGroupId();
         String message = chatRequest.getMessage().trim();
@@ -95,20 +98,67 @@ public class SimpleChatController {
 
         } catch (Exception e) {
             log.error("聊天失败，groupId: {}, userId: {}, error: {}", groupId, loginUser.getId(), e.getMessage(), e);
-            
             // 保存错误消息
             chatHistoryService.saveAiErrorMessage(groupId, loginUser.getId(), e.getMessage());
-            
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "聊天失败：" + e.getMessage());
         }
     }
 
     /**
-     * 初始化分组对话（如果没有历史记录）
-     *
-     * @param groupId
-     * @param request
-     * @return
+     * 文本聊天（SSE流式）
+     */
+    @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamChat(@RequestParam Long groupId,
+                                 @RequestParam String message,
+                                 HttpServletRequest request) {
+        if (groupId == null) throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        if (message == null || message.trim().isEmpty()) throw new BusinessException(ErrorCode.PARAMS_ERROR, "消息不能为空");
+
+        // 鉴权与分组归属校验
+        User loginUser = userService.getLoginUser(request);
+        ChatGroup chatGroup = chatGroupService.getById(groupId);
+        if (chatGroup == null) throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "分组不存在");
+        if (!chatGroup.getUserId().equals(loginUser.getId())) throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该分组");
+
+        // 保存用户消息
+        chatHistoryService.saveUserMessage(groupId, loginUser.getId(), message);
+
+        SseEmitter emitter = new SseEmitter(0L); // 不超时
+        // 流式生成
+        AiService aiService = aiServiceFactory.getAiService(groupId);
+        StringBuilder buf = new StringBuilder(1024);
+        Flux<String> flux = aiService.chatStreamInXiYangYangRole(message);
+
+        flux.subscribe(
+                chunk -> {
+                    buf.append(chunk);
+                    try {
+                        String json = JSONUtil.toJsonStr(java.util.Map.of("data", chunk));
+                        emitter.send(SseEmitter.event().data(json));
+                    } catch (Exception sendEx) {
+                        try { emitter.completeWithError(sendEx); } catch (Exception ignore) {}
+                    }
+                },
+                err -> {
+                    log.error("SSE chat error", err);
+                    try { chatHistoryService.saveAiErrorMessage(groupId, loginUser.getId(), err.getMessage()); } catch (Exception ignore) {}
+                    try { emitter.completeWithError(err); } catch (Exception ignore) {}
+                },
+                () -> {
+                    try {
+                        if (buf.length() > 0) chatHistoryService.saveAiMessage(groupId, loginUser.getId(), buf.toString());
+                        emitter.send(SseEmitter.event().name("done").data(""));
+                    } catch (Exception ignore) {
+                    } finally {
+                        try { emitter.complete(); } catch (Exception ignore) {}
+                    }
+                }
+        );
+        return emitter;
+    }
+
+    /**
+     * 初始化分组：写入一条 AI 问候语（不触发 LLM）并修复旧数据
      */
     @PostMapping("/init")
     public BaseResponse<String> initChat(@RequestParam Long groupId, HttpServletRequest request) {

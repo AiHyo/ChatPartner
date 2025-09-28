@@ -411,12 +411,16 @@ public class QiniuAsrWsClient {
 
                     // 根据结果类型调用相应的回调，并进行去重
                     if (isFinal) {
-                        // 若同一 logId 再次出现，视为同一条话语的确认，不重复触发
-                        if (!logId.isEmpty() && logId.equals(this.lastFinalLogId)) {
+                        // 更稳健的去重逻辑：同一 logId 情况下，若 end_time 增大，视为新的最终话语
+                        boolean sameLog = !logId.isEmpty() && logId.equals(this.lastFinalLogId);
+                        boolean newerByEndTime = (maxFinalEnd >= 0) && (maxFinalEnd > this.lastFinalEndTime);
+
+                        if (sameLog && !newerByEndTime) {
+                            // 同一 logId 且没有更大的 end_time，当作重复确认
                             this.lastFinalEndTime = Math.max(this.lastFinalEndTime, maxFinalEnd);
                             log.debug("Duplicate ASR final ignored by logId: '{}' (logId={}, endTime={})", text, logId, maxFinalEnd);
-                        } else if (logId.isEmpty() && text.equals(this.lastFinalText)) {
-                            // 无 logId 时退化到文本去重
+                        } else if (!sameLog && logId.isEmpty() && text.equals(this.lastFinalText) && !newerByEndTime) {
+                            // 无 logId 时退化到文本去重，同时参考 end_time
                             this.lastFinalEndTime = Math.max(this.lastFinalEndTime, maxFinalEnd);
                             log.debug("Duplicate ASR final ignored by text: '{}' (endTime={})", text, maxFinalEnd);
                         } else {
